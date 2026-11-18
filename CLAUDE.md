@@ -139,3 +139,9 @@ docs: 新增 CLAUDE.md 项目指引
 ```
 
 常用前缀：`feat:`、`fix:`、`docs:`、`test:`、`chore:`、`refactor:`。
+
+每次提交还要在正文末尾追加协作者署名：
+
+```text
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+```
