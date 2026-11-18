@@ -36,7 +36,7 @@ uv build                             # 生成 wheel 与 sdist
 | `robin/cli.py` | 参数解析、provider/模型选择、欢迎面板、one-shot 与 REPL |
 | `robin/runtime.py` | `Robin` 门面：会话、prompt、工具调度、记忆、checkpoint、report |
 | `robin/agent_loop.py` | 从 runtime 拆出的主循环（感知→决策→行动→记录→停机） |
-| `robin/providers/clients.py` | Ollama / OpenAI 兼容 / Anthropic 兼容 / Fake 客户端，统一 `complete()` |
+| `robin/providers/clients.py` | LiteLLM 协议适配 / Fake 客户端，统一 `complete(ModelRequest)` |
 | `robin/tools.py` | 工具白名单、参数校验、具体实现 |
 | `robin/tool_executor.py` | 带元数据的结构化执行层 |
 | `robin/tool_context.py` | 传给工具函数的窄上下文（根目录、路径解析、shell env） |
@@ -59,13 +59,17 @@ uv build                             # 生成 wheel 与 sdist
 
 ### 工具协议
 
-模型用文本标签表达动作，`Robin.parse()` 解析：
+模型通过原生工具调用表达动作，`ModelClient.complete(ModelRequest)` 返回统一的
+`ModelResponse`。`providers/types.py` 定义响应、用量与调用 ID；`providers/context.py`
+生成 JSON Schema 和结构化消息；`providers/clients.py` 用 LiteLLM 转换四种 API。
+Agent Loop 不解析 XML/DSML；普通回答中的这些标签保持文本。多个调用按顺序执行，
+每个结果用原调用 ID 回传。预算耗尽后的未执行调用写入拒绝结果。
 
-```text
-<tool>{"name":"read_file","args":{"path":"README.md"}}</tool>
-<tool name="patch_file" path="a.py"><old_text>...</old_text><new_text>...</new_text></tool>
-<final>最终答案</final>
-```
+`--api` > `ROBIN_API` > provider 默认值。OpenAI 默认 Responses，Anthropic/DeepSeek
+默认 Anthropic Messages，Ollama 默认 Ollama Chat；自定义网关显式配置协议。
+不允许按模型名称或域名自动切换端点，不允许静默丢弃不支持的参数。
+会话格式版本为 2；旧历史转成明确标注的摘要，旧用量保留。推理内容单独保存，
+仅在协议需要时回传，不拼入终端回答。测试与评测 Fake 响应必须是结构化对象。
 
 工具白名单固定为 `list_files`、`read_file`、`search`、`run_shell`、`write_file`、`patch_file`，
 以及仅在 `depth < max_depth` 时暴露的 `delegate`。新增工具要同时改
@@ -103,6 +107,7 @@ uv build                             # 生成 wheel 与 sdist
 - resume 状态：`no-checkpoint`、`full-valid`、`partial-stale`、`workspace-mismatch`、`schema-mismatch`。
 - `checkpoint.RUNTIME_IDENTITY_KEYS` 决定恢复时哪些运行环境变化会导致不匹配；
   新增影响行为的 runtime 字段时要一并登记。
+- `context_window` 已纳入运行环境指纹；旧 checkpoint 缺少该字段时仍可恢复。
 
 ### 停机条件
 
@@ -115,6 +120,8 @@ uv build                             # 生成 wheel 与 sdist
 - `.env` 从 `repo_root` 向上查找并加载（`config.load_project_env`），已存在的环境变量会被 `.env` 覆盖。
 - `ROBIN_PROVIDER` 默认 `deepseek`；模型与 base URL 默认值见 `cli.py`，DeepSeek 走
   Anthropic 兼容端点并显式关闭 thinking。
+- DeepSeek 显式切换 API 时由适配层转换关闭推理参数：Messages/Chat 使用
+  `thinking.type=disabled`，Responses 使用 `reasoning.effort=none`，Ollama 使用 `think=false`。
 - 脱敏名单：`DEFAULT_SECRET_ENV_NAMES` + `--secret-env-name` + `ROBIN_SECRET_ENV_NAMES`。
 - 不要把 `.env`、真实密钥、`.robin/`、`dist/` 提交进仓库。
 
