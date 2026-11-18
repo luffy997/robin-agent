@@ -126,3 +126,16 @@ uv build                             # 生成 wheel 与 sdist
 - provider 差异收敛在 `providers/clients.py` 的 `complete()` 内，runtime 不认识具体 HTTP 协议。
 - 测试不要依赖真实网络、真实密钥或固定 locale/时区。
 - 注释与文档保持中文风格：说明“为什么”和链路位置，而不是复述代码。
+
+### 提交信息
+
+提交信息只允许类型前缀使用英文，标题描述和正文详情全部使用中文：
+
+```text
+docs: 新增 CLAUDE.md 项目指引
+
+补充项目概览、常用命令、代码地图与核心机制说明，覆盖工具协议、
+审批策略、上下文预算、记忆分层、持久化与恢复、配置与安全约束。
+```
+
+常用前缀：`feat:`、`fix:`、`docs:`、`test:`、`chore:`、`refactor:`。
