@@ -9,6 +9,7 @@ description = "Small local coding agent for DeepSeek, OpenAI-compatible, Anthrop
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
+    "litellm==1.110.0",
     "prompt-toolkit>=3.0,<4",
 ]
 
