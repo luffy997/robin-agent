@@ -1,3 +1,4 @@
+from robin.providers.types import text_response
 import json
 
 import pytest
@@ -11,7 +12,7 @@ def build_agent(tmp_path, allowed_tools=None):
     workspace = WorkspaceContext.build(tmp_path)
     store = SessionStore(tmp_path / ".robin" / "sessions")
     return Robin(
-        model_client=FakeModelClient(["<final>Done.</final>"]),
+        model_client=FakeModelClient([text_response('Done.')]),
         workspace=workspace,
         session_store=store,
         approval_policy="auto",
@@ -91,7 +92,7 @@ def test_benchmark_evaluator_applies_allowed_tools_to_runtime_prompt(tmp_path):
 
     class CaptureModelClient(FakeModelClient):
         def __init__(self):
-            super().__init__(["<final>Done.</final>"])
+            super().__init__([text_response('Done.')])
             captured_clients.append(self)
 
     evaluator = BenchmarkEvaluator(

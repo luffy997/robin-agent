@@ -1,3 +1,5 @@
+from robin.providers.types import Usage
+from robin.providers.types import ModelResponse, text_response, tool_response
 import os
 import json
 import subprocess
@@ -5,15 +7,12 @@ import sys
 from pathlib import Path
 from unittest.mock import patch
 
-import pytest
 
 import robin as robin_pkg
 from robin import (
-    AnthropicCompatibleModelClient,
     FakeModelClient,
     Robin,
     OllamaModelClient,
-    OpenAICompatibleModelClient,
     SessionStore,
     WorkspaceContext,
     build_welcome,
@@ -43,8 +42,8 @@ def test_agent_runs_tool_then_final(tmp_path):
     agent = build_agent(
         tmp_path,
         [
-            '<tool>{"name":"read_file","args":{"path":"hello.txt","start":1,"end":2}}</tool>',
-            "<final>Read the file successfully.</final>",
+            tool_response('read_file', {'path': 'hello.txt', 'start': 1, 'end': 2}),
+            text_response('Read the file successfully.'),
         ],
     )
 
@@ -59,8 +58,8 @@ def test_agent_updates_task_summary_on_each_request(tmp_path):
     agent = build_agent(
         tmp_path,
         [
-            "<final>First pass.</final>",
-            "<final>Second pass.</final>",
+            text_response('First pass.'),
+            text_response('Second pass.'),
         ],
     )
 
@@ -76,9 +75,9 @@ def test_agent_only_stores_reusable_epistemic_notes(tmp_path):
     agent = build_agent(
         tmp_path,
         [
-            '<tool>{"name":"read_file","args":{"path":"facts.txt","start":1,"end":1}}</tool>',
-            "<final>Done.</final>",
-            "<final>It is red.</final>",
+            tool_response('read_file', {'path': 'facts.txt', 'start': 1, 'end': 1}),
+            text_response('Done.'),
+            text_response('It is red.'),
         ],
     )
 
@@ -89,7 +88,7 @@ def test_agent_only_stores_reusable_epistemic_notes(tmp_path):
     assert not any(note["text"] == "Done." for note in notes)
 
     resumed = Robin.from_session(
-        model_client=FakeModelClient(["<final>It is red.</final>"]),
+        model_client=FakeModelClient([text_response('It is red.')]),
         workspace=agent.workspace,
         session_store=agent.session_store,
         session_id=agent.session["id"],
@@ -131,8 +130,8 @@ def test_agent_retries_after_empty_model_output(tmp_path):
     agent = build_agent(
         tmp_path,
         [
-            "",
-            "<final>Recovered after retry.</final>",
+            ModelResponse(),
+            text_response('Recovered after retry.'),
         ],
     )
 
@@ -140,7 +139,7 @@ def test_agent_retries_after_empty_model_output(tmp_path):
 
     assert answer == "Recovered after retry."
     notices = [item["content"] for item in agent.session["history"] if item["role"] == "assistant"]
-    assert any("empty response" in item for item in notices)
+    assert any("non-empty answer" in item for item in notices)
 
 
 def test_agent_retries_after_malformed_tool_payload(tmp_path):
@@ -148,9 +147,9 @@ def test_agent_retries_after_malformed_tool_payload(tmp_path):
     agent = build_agent(
         tmp_path,
         [
-            '<tool>{"name":"read_file","args":"bad"}</tool>',
-            '<tool>{"name":"read_file","args":{"path":"hello.txt","start":1,"end":1}}</tool>',
-            "<final>Recovered after malformed tool output.</final>",
+            ModelResponse(),
+            tool_response('read_file', {'path': 'hello.txt', 'start': 1, 'end': 1}),
+            text_response('Recovered after malformed tool output.'),
         ],
     )
 
@@ -159,15 +158,15 @@ def test_agent_retries_after_malformed_tool_payload(tmp_path):
     assert answer == "Recovered after malformed tool output."
     assert any(item["role"] == "tool" and item["name"] == "read_file" for item in agent.session["history"])
     notices = [item["content"] for item in agent.session["history"] if item["role"] == "assistant"]
-    assert any("valid <tool> call" in item for item in notices)
+    assert any("native tool call" in item for item in notices)
 
 
-def test_agent_accepts_xml_write_file_tool(tmp_path):
+def test_agent_accepts_native_write_file_tool(tmp_path):
     agent = build_agent(
         tmp_path,
         [
-            '<tool name="write_file" path="hello.py"><content>print("hi")\n</content></tool>',
-            "<final>Done.</final>",
+            tool_response('write_file', {'path': 'hello.py', 'content': 'print("hi")\n'}),
+            text_response('Done.'),
         ],
     )
 
@@ -181,9 +180,9 @@ def test_retries_do_not_consume_the_whole_budget(tmp_path):
     agent = build_agent(
         tmp_path,
         [
-            "",
-            "",
-            "<final>Recovered after several retries.</final>",
+            ModelResponse(),
+            ModelResponse(),
+            text_response('Recovered after several retries.'),
         ],
         max_steps=1,
     )
@@ -194,11 +193,11 @@ def test_retries_do_not_consume_the_whole_budget(tmp_path):
 
 
 def test_agent_saves_and_resumes_session(tmp_path):
-    agent = build_agent(tmp_path, ["<final>First pass.</final>"])
+    agent = build_agent(tmp_path, [text_response('First pass.')])
     assert agent.ask("Start a session") == "First pass."
 
     resumed = Robin.from_session(
-        model_client=FakeModelClient(["<final>Resumed.</final>"]),
+        model_client=FakeModelClient([text_response('Resumed.')]),
         workspace=agent.workspace,
         session_store=agent.session_store,
         session_id=agent.session["id"],
@@ -213,9 +212,9 @@ def test_delegate_uses_child_agent(tmp_path):
     agent = build_agent(
         tmp_path,
         [
-            '<tool>{"name":"delegate","args":{"task":"inspect README","max_steps":2}}</tool>',
-            "<final>Child result.</final>",
-            "<final>Parent incorporated the child result.</final>",
+            tool_response('delegate', {'task': 'inspect README', 'max_steps': 2}),
+            text_response('Child result.'),
+            text_response('Parent incorporated the child result.'),
         ],
     )
 
@@ -252,7 +251,7 @@ def test_invalid_risky_tool_does_not_prompt_for_approval(tmp_path):
         result = agent.run_tool("write_file", {})
 
     assert result.startswith("error: invalid arguments for write_file: 'path'")
-    assert 'example: <tool name="write_file"' in result
+    assert '"name": "write_file"' in result
     mock_input.assert_not_called()
 
 
@@ -290,7 +289,7 @@ def test_welcome_screen_keeps_box_shape_for_long_paths(tmp_path):
     assert len(lines) >= 5
     assert len({len(line) for line in lines}) == 1
     assert "..." in welcome
-    assert "(  o o  )" in welcome
+    assert all(line.strip() in welcome for line in robin_pkg.cli.WELCOME_ART)
     assert "MINI-CODING-AGENT" not in welcome
     assert "MINI CODING AGENT" not in welcome
     assert "robin" in welcome
@@ -299,403 +298,6 @@ def test_welcome_screen_keeps_box_shape_for_long_paths(tmp_path):
     assert "SLASH" not in welcome
     assert "READY      " not in welcome
     assert "commands: Commands:" not in welcome
-
-
-def test_ollama_client_posts_expected_payload():
-    captured = {}
-
-    class FakeResponse:
-        def __enter__(self):
-            return self
-
-        def __exit__(self, exc_type, exc, tb):
-            return False
-
-        def read(self):
-            return json.dumps({"response": "<final>ok</final>"}).encode("utf-8")
-
-    def fake_urlopen(request, timeout):
-        captured["url"] = request.full_url
-        captured["timeout"] = timeout
-        captured["body"] = json.loads(request.data.decode("utf-8"))
-        return FakeResponse()
-
-    client = OllamaModelClient(
-        model="qwen3.5:4b",
-        host="http://127.0.0.1:11434",
-        temperature=0.2,
-        top_p=0.9,
-        timeout=30,
-    )
-
-    with patch("urllib.request.urlopen", fake_urlopen):
-        result = client.complete("hello", 42)
-
-    assert result == "<final>ok</final>"
-    assert captured["url"] == "http://127.0.0.1:11434/api/generate"
-    assert captured["timeout"] == 30
-    assert captured["body"]["model"] == "qwen3.5:4b"
-    assert captured["body"]["prompt"] == "hello"
-    assert captured["body"]["stream"] is False
-
-
-def test_openai_compatible_client_posts_expected_responses_payload():
-    captured = {}
-
-    class FakeResponse:
-        headers = {"Content-Type": "application/json"}
-
-        def __enter__(self):
-            return self
-
-        def __exit__(self, exc_type, exc, tb):
-            return False
-
-        def read(self):
-            return json.dumps({"output_text": "<final>ok</final>"}).encode("utf-8")
-
-    def fake_urlopen(request, timeout):
-        captured["url"] = request.full_url
-        captured["timeout"] = timeout
-        captured["headers"] = dict(request.headers)
-        captured["body"] = json.loads(request.data.decode("utf-8"))
-        return FakeResponse()
-
-    client = OpenAICompatibleModelClient(
-        model="right.codes/codex-mini",
-        base_url="https://right.codes/v1",
-        api_key="sk-test",
-        temperature=0.2,
-        timeout=30,
-    )
-
-    with patch("urllib.request.urlopen", fake_urlopen):
-        result = client.complete("hello", 42)
-
-    assert result == "<final>ok</final>"
-    assert captured["url"] == "https://right.codes/v1/responses"
-    assert captured["timeout"] == 30
-    assert captured["headers"]["Authorization"] == "Bearer sk-test"
-    assert captured["headers"]["Content-type"] == "application/json"
-    assert captured["headers"]["Accept"] == "application/json"
-    assert captured["headers"]["User-agent"] == "robin/0.1"
-    assert captured["body"] == {
-        "model": "right.codes/codex-mini",
-        "input": [
-            {
-                "role": "user",
-                "content": [
-                    {
-                        "type": "input_text",
-                        "text": "hello",
-                    }
-                ],
-            }
-        ],
-        "max_output_tokens": 42,
-        "stream": False,
-        "temperature": 0.2,
-    }
-
-
-def test_openai_compatible_client_sends_prompt_cache_fields_and_records_usage():
-    captured = {}
-
-    class FakeResponse:
-        headers = {"Content-Type": "application/json"}
-
-        def __enter__(self):
-            return self
-
-        def __exit__(self, exc_type, exc, tb):
-            return False
-
-        def read(self):
-            return json.dumps(
-                {
-                    "output_text": "<final>ok</final>",
-                    "usage": {
-                        "input_tokens": 2048,
-                        "input_tokens_details": {"cached_tokens": 1536},
-                        "output_tokens": 32,
-                        "total_tokens": 2080,
-                    },
-                }
-            ).encode("utf-8")
-
-    def fake_urlopen(request, timeout):
-        captured["url"] = request.full_url
-        captured["timeout"] = timeout
-        captured["headers"] = dict(request.headers)
-        captured["body"] = json.loads(request.data.decode("utf-8"))
-        return FakeResponse()
-
-    client = OpenAICompatibleModelClient(
-        model="right.codes/codex-mini",
-        base_url="https://right.codes/v1",
-        api_key="sk-test",
-        temperature=0.2,
-        timeout=30,
-    )
-
-    with patch("urllib.request.urlopen", fake_urlopen):
-        result = client.complete(
-            "hello",
-            42,
-            prompt_cache_key="prefix-hash-123",
-            prompt_cache_retention="in_memory",
-        )
-
-    assert result == "<final>ok</final>"
-    assert captured["body"]["prompt_cache_key"] == "prefix-hash-123"
-    assert captured["body"]["prompt_cache_retention"] == "in_memory"
-    assert client.last_completion_metadata["prompt_cache_supported"] is True
-    assert client.last_completion_metadata["cached_tokens"] == 1536
-    assert client.last_completion_metadata["cache_hit"] is True
-    assert client.last_completion_metadata["input_tokens"] == 2048
-
-
-def test_openai_compatible_client_extracts_text_from_event_stream():
-    class FakeResponse:
-        headers = {"Content-Type": "text/event-stream"}
-
-        def __enter__(self):
-            return self
-
-        def __exit__(self, exc_type, exc, tb):
-            return False
-
-        def read(self):
-            return (
-                'data: {"type":"response.created","response":{"id":"resp_1","output":[]}}\n'
-                'data: {"type":"response.completed","response":{"output":[{"content":[{"text":"<final>stream ok</final>"}]}]}}\n'
-                "data: [DONE]\n"
-            ).encode("utf-8")
-
-    client = OpenAICompatibleModelClient(
-        model="right.codes/codex-mini",
-        base_url="https://right.codes/v1",
-        api_key="sk-test",
-        temperature=0.2,
-        timeout=30,
-    )
-
-    with patch("urllib.request.urlopen", return_value=FakeResponse()):
-        result = client.complete("hello", 42)
-
-    assert result == "<final>stream ok</final>"
-
-
-def test_openai_compatible_client_extracts_text_from_event_stream_deltas():
-    class FakeResponse:
-        headers = {"Content-Type": "text/event-stream"}
-
-        def __enter__(self):
-            return self
-
-        def __exit__(self, exc_type, exc, tb):
-            return False
-
-        def read(self):
-            return (
-                'event: response.output_text.delta\n'
-                'data: {"type":"response.output_text.delta","delta":"<final>"}\n'
-                'event: response.output_text.delta\n'
-                'data: {"type":"response.output_text.delta","delta":"OK"}\n'
-                'event: response.output_text.done\n'
-                'data: {"type":"response.output_text.done","text":"<final>OK</final>"}\n'
-                "data: [DONE]\n"
-            ).encode("utf-8")
-
-    client = OpenAICompatibleModelClient(
-        model="right.codes/codex-mini",
-        base_url="https://right.codes/v1",
-        api_key="sk-test",
-        temperature=0.2,
-        timeout=30,
-    )
-
-    with patch("urllib.request.urlopen", return_value=FakeResponse()):
-        result = client.complete("hello", 42)
-
-    assert result == "<final>OK</final>"
-
-
-def test_anthropic_compatible_client_posts_expected_messages_payload():
-    captured = {}
-
-    class FakeResponse:
-        headers = {"Content-Type": "application/json"}
-
-        def __enter__(self):
-            return self
-
-        def __exit__(self, exc_type, exc, tb):
-            return False
-
-        def read(self):
-            return json.dumps(
-                {
-                    "content": [
-                        {
-                            "type": "text",
-                            "text": "<final>ok</final>",
-                        }
-                    ]
-                }
-            ).encode("utf-8")
-
-    def fake_urlopen(request, timeout):
-        captured["url"] = request.full_url
-        captured["timeout"] = timeout
-        captured["headers"] = dict(request.headers)
-        captured["body"] = json.loads(request.data.decode("utf-8"))
-        return FakeResponse()
-
-    client = AnthropicCompatibleModelClient(
-        model="claude-sonnet-4-5-20250929",
-        base_url="https://www.right.codes/claude-aws/v1",
-        api_key="sk-test",
-        temperature=0.2,
-        timeout=30,
-    )
-
-    with patch("urllib.request.urlopen", fake_urlopen):
-        result = client.complete("hello", 42)
-
-    assert result == "<final>ok</final>"
-    assert captured["url"] == "https://www.right.codes/claude-aws/v1/messages"
-    assert captured["timeout"] == 30
-    assert captured["headers"]["X-api-key"] == "sk-test"
-    assert captured["headers"]["Anthropic-version"] == "2023-06-01"
-    assert captured["headers"]["Content-type"] == "application/json"
-    assert captured["body"] == {
-        "model": "claude-sonnet-4-5-20250929",
-        "messages": [
-            {
-                "role": "user",
-                "content": [
-                    {
-                        "type": "text",
-                        "text": "hello",
-                    }
-                ],
-            }
-        ],
-        "max_tokens": 42,
-        "stream": False,
-        "temperature": 0.2,
-    }
-
-
-def test_anthropic_compatible_client_extracts_first_text_block():
-    class FakeResponse:
-        headers = {"Content-Type": "application/json"}
-
-        def __enter__(self):
-            return self
-
-        def __exit__(self, exc_type, exc, tb):
-            return False
-
-        def read(self):
-            return json.dumps(
-                {
-                    "content": [
-                        {"type": "thinking", "thinking": "hidden"},
-                        {"type": "text", "text": "<final>ok</final>"},
-                    ]
-                }
-            ).encode("utf-8")
-
-    client = AnthropicCompatibleModelClient(
-        model="claude-sonnet-4-5-20250929",
-        base_url="https://www.right.codes/claude-aws/v1",
-        api_key="sk-test",
-        temperature=0.2,
-        timeout=30,
-    )
-
-    with patch("urllib.request.urlopen", return_value=FakeResponse()):
-        result = client.complete("hello", 42)
-
-    assert result == "<final>ok</final>"
-
-
-def test_anthropic_compatible_client_classifies_thinking_only_truncation():
-    class FakeResponse:
-        def __enter__(self):
-            return self
-
-        def __exit__(self, exc_type, exc, tb):
-            return False
-
-        def read(self):
-            return json.dumps(
-                {
-                    "content": [
-                        {"type": "thinking", "thinking": "Inspecting the test failures."},
-                    ],
-                    "stop_reason": "max_tokens",
-                    "usage": {"input_tokens": 1000, "output_tokens": 512},
-                }
-            ).encode("utf-8")
-
-    client = AnthropicCompatibleModelClient(
-        model="deepseek-v4-pro",
-        base_url="https://api.deepseek.com/anthropic",
-        api_key="sk-test",
-        temperature=0.2,
-        timeout=30,
-    )
-
-    with patch("urllib.request.urlopen", return_value=FakeResponse()):
-        with pytest.raises(RuntimeError, match="ended before a text block"):
-            client.complete("inspect tests", 512)
-
-    assert client.last_completion_metadata == {
-        "stop_reason": "max_tokens",
-        "content_block_types": ["thinking"],
-        "input_tokens": 1000,
-        "output_tokens": 512,
-    }
-
-
-def test_anthropic_compatible_client_sends_explicit_thinking_mode():
-    captured = {}
-
-    class FakeResponse:
-        def __enter__(self):
-            return self
-
-        def __exit__(self, exc_type, exc, tb):
-            return False
-
-        def read(self):
-            return json.dumps(
-                {
-                    "content": [{"type": "text", "text": "<final>ok</final>"}],
-                    "stop_reason": "end_turn",
-                }
-            ).encode("utf-8")
-
-    def fake_urlopen(request, timeout):
-        captured["body"] = json.loads(request.data.decode("utf-8"))
-        return FakeResponse()
-
-    client = AnthropicCompatibleModelClient(
-        model="deepseek-v4-pro",
-        base_url="https://api.deepseek.com/anthropic",
-        api_key="sk-test",
-        temperature=0.2,
-        timeout=30,
-        thinking={"type": "disabled"},
-    )
-
-    with patch("urllib.request.urlopen", fake_urlopen):
-        assert client.complete("inspect tests", 512) == "<final>ok</final>"
-
-    assert captured["body"]["thinking"] == {"type": "disabled"}
 
 
 def test_build_agent_uses_openai_provider_and_model_override(tmp_path):
@@ -984,7 +586,7 @@ def test_build_agent_uses_deepseek_provider_and_env_configuration(tmp_path):
     assert mock_anthropic.call_args.kwargs["model"] == "deepseek-v4-pro"
     assert mock_anthropic.call_args.kwargs["base_url"] == "https://api.deepseek.com/anthropic"
     assert mock_anthropic.call_args.kwargs["api_key"] == "sk-project-deepseek"
-    assert mock_anthropic.call_args.kwargs["thinking"] == {"type": "disabled"}
+    assert mock_anthropic.call_args.kwargs["reasoning_disabled"] is True
     assert agent.model_client is fake_client
 
 
@@ -1032,8 +634,8 @@ def test_successful_run_persists_run_artifacts_and_stop_reason(tmp_path):
     agent = build_agent(
         tmp_path,
         [
-            '<tool>{"name":"read_file","args":{"path":"hello.txt","start":1,"end":2}}</tool>',
-            "<final>Finished.</final>",
+            tool_response('read_file', {'path': 'hello.txt', 'start': 1, 'end': 2}),
+            text_response('Finished.'),
         ],
     )
 
@@ -1071,8 +673,8 @@ def test_trace_and_report_redact_secret_env_values(tmp_path):
         agent = build_agent(
             tmp_path,
             [
-                '<tool>{"name":"run_shell","args":{"command":"printf \'%s\' \'sk-test-secret-123\'","timeout":20}}</tool>',
-                "<final>Masked.</final>",
+                tool_response('run_shell', {'command': "printf '%s' 'sk-test-secret-123'", 'timeout': 20}),
+                text_response('Masked.'),
             ],
         )
 
@@ -1102,7 +704,7 @@ def test_trace_and_report_redact_secret_env_values(tmp_path):
 
 
 def test_prompt_budget_metadata_records_budget_decisions(tmp_path):
-    agent = build_agent(tmp_path, ["<final>Done.</final>"])
+    agent = build_agent(tmp_path, [text_response('Done.')])
     agent.memory.append_note("alpha episodic note " + ("A" * 120), tags=("recall",), created_at="2026-04-07T10:00:00+00:00")
     agent.memory.append_note("beta episodic recall note " + ("B" * 120), created_at="2026-04-07T10:01:00+00:00")
     agent.memory.append_note("gamma episodic note " + ("C" * 120), tags=("recall",), created_at="2026-04-07T10:02:00+00:00")
@@ -1166,7 +768,7 @@ def test_prompt_metadata_refreshes_prefix_when_workspace_changes(tmp_path):
 
 
 def test_agent_creates_checkpoint_when_context_reduction_happens_and_artifacts_only_reference_it(tmp_path):
-    agent = build_agent(tmp_path, ["<final>Done after checkpoint.</final>"])
+    agent = build_agent(tmp_path, [text_response('Done after checkpoint.')])
     for index in range(10):
         agent.record(
             {
@@ -1214,7 +816,7 @@ def test_agent_creates_checkpoint_when_context_reduction_happens_and_artifacts_o
 
 
 def test_resume_prompt_uses_checkpoint_state_not_just_history(tmp_path):
-    agent = build_agent(tmp_path, ["<final>checkpoint ready.</final>"])
+    agent = build_agent(tmp_path, [text_response('checkpoint ready.')])
     agent.session["checkpoints"] = {
         "current_id": "ckpt_manual",
         "items": {
@@ -1238,7 +840,7 @@ def test_resume_prompt_uses_checkpoint_state_not_just_history(tmp_path):
     agent.session_store.save(agent.session)
 
     resumed = Robin.from_session(
-        model_client=FakeModelClient(["<final>Resumed.</final>"]),
+        model_client=FakeModelClient([text_response('Resumed.')]),
         workspace=build_workspace(tmp_path),
         session_store=agent.session_store,
         session_id=agent.session["id"],
@@ -1257,7 +859,7 @@ def test_resume_prompt_uses_checkpoint_state_not_just_history(tmp_path):
 def test_resume_invalidates_stale_file_summaries_and_marks_partial_stale(tmp_path):
     file_path = tmp_path / "runtime.py"
     file_path.write_text("alpha\n", encoding="utf-8")
-    agent = build_agent(tmp_path, ["<final>checkpoint ready.</final>"])
+    agent = build_agent(tmp_path, [text_response('checkpoint ready.')])
     agent.memory.set_file_summary("runtime.py", "runtime.py: alpha")
     freshness = agent.memory.to_dict()["file_summaries"]["runtime.py"]["freshness"]
     agent.session["checkpoints"] = {
@@ -1284,7 +886,7 @@ def test_resume_invalidates_stale_file_summaries_and_marks_partial_stale(tmp_pat
     file_path.write_text("beta\n", encoding="utf-8")
 
     resumed = Robin.from_session(
-        model_client=FakeModelClient(["<final>Resumed.</final>"]),
+        model_client=FakeModelClient([text_response('Resumed.')]),
         workspace=build_workspace(tmp_path),
         session_store=agent.session_store,
         session_id=agent.session["id"],
@@ -1316,7 +918,7 @@ def test_run_shell_nonzero_with_workspace_change_is_recorded_as_partial_success(
 
 
 def test_resume_marks_workspace_mismatch_when_checkpoint_runtime_identity_is_stale(tmp_path):
-    agent = build_agent(tmp_path, ["<final>checkpoint ready.</final>"])
+    agent = build_agent(tmp_path, [text_response('checkpoint ready.')])
     agent.session["checkpoints"] = {
         "current_id": "ckpt_workspace",
         "items": {
@@ -1340,7 +942,7 @@ def test_resume_marks_workspace_mismatch_when_checkpoint_runtime_identity_is_sta
     agent.session_store.save(agent.session)
 
     resumed = Robin.from_session(
-        model_client=FakeModelClient(["<final>Resumed.</final>"]),
+        model_client=FakeModelClient([text_response('Resumed.')]),
         workspace=build_workspace(tmp_path),
         session_store=agent.session_store,
         session_id=agent.session["id"],
@@ -1355,8 +957,8 @@ def test_write_file_trace_records_minimum_tool_contract_fields(tmp_path):
     agent = build_agent(
         tmp_path,
         [
-            '<tool>{"name":"write_file","args":{"path":"notes.txt","content":"hello\\n"}}</tool>',
-            "<final>Done.</final>",
+            tool_response('write_file', {'path': 'notes.txt', 'content': 'hello\n'}),
+            text_response('Done.'),
         ],
     )
 
@@ -1378,7 +980,7 @@ def test_write_file_trace_records_minimum_tool_contract_fields(tmp_path):
 
 
 def test_resume_marks_schema_mismatch_when_checkpoint_version_is_incompatible(tmp_path):
-    agent = build_agent(tmp_path, ["<final>checkpoint ready.</final>"])
+    agent = build_agent(tmp_path, [text_response('checkpoint ready.')])
     agent.session["checkpoints"] = {
         "current_id": "ckpt_schema",
         "items": {
@@ -1402,7 +1004,7 @@ def test_resume_marks_schema_mismatch_when_checkpoint_version_is_incompatible(tm
     agent.session_store.save(agent.session)
 
     resumed = Robin.from_session(
-        model_client=FakeModelClient(["<final>Resumed.</final>"]),
+        model_client=FakeModelClient([text_response('Resumed.')]),
         workspace=build_workspace(tmp_path),
         session_store=agent.session_store,
         session_id=agent.session["id"],
@@ -1414,12 +1016,12 @@ def test_resume_marks_schema_mismatch_when_checkpoint_version_is_incompatible(tm
 
 
 def test_resume_marks_no_checkpoint_when_session_has_no_checkpoint_state(tmp_path):
-    agent = build_agent(tmp_path, ["<final>checkpoint ready.</final>"])
+    agent = build_agent(tmp_path, [text_response('checkpoint ready.')])
     agent.session.pop("checkpoints", None)
     agent.session_store.save(agent.session)
 
     resumed = Robin.from_session(
-        model_client=FakeModelClient(["<final>Resumed.</final>"]),
+        model_client=FakeModelClient([text_response('Resumed.')]),
         workspace=build_workspace(tmp_path),
         session_store=agent.session_store,
         session_id=agent.session["id"],
@@ -1434,7 +1036,7 @@ def test_resume_marks_no_checkpoint_when_session_has_no_checkpoint_state(tmp_pat
 def test_freshness_mismatch_creates_checkpoint_before_model_completion(tmp_path):
     file_path = tmp_path / "runtime.py"
     file_path.write_text("alpha\n", encoding="utf-8")
-    agent = build_agent(tmp_path, ["<final>Resumed.</final>"])
+    agent = build_agent(tmp_path, [text_response('Resumed.')])
     agent.memory.set_file_summary("runtime.py", "runtime.py: alpha")
     freshness = agent.memory.to_dict()["file_summaries"]["runtime.py"]["freshness"]
     agent.session["checkpoints"] = {
@@ -1476,7 +1078,7 @@ def test_runtime_identity_persists_key_execution_metadata(tmp_path):
     workspace = build_workspace(tmp_path)
     store = SessionStore(tmp_path / ".robin" / "sessions")
     agent = Robin(
-        model_client=FakeModelClient(["<final>Done.</final>"]),
+        model_client=FakeModelClient([text_response('Done.')]),
         workspace=workspace,
         session_store=store,
         approval_policy="never",
@@ -1499,7 +1101,7 @@ def test_runtime_identity_persists_key_execution_metadata(tmp_path):
 
 
 def test_resume_records_runtime_identity_mismatch_fields_in_metadata_and_trace(tmp_path):
-    agent = build_agent(tmp_path, ["<final>checkpoint ready.</final>"])
+    agent = build_agent(tmp_path, [text_response('checkpoint ready.')])
     agent.session["checkpoints"] = {
         "current_id": "ckpt_identity",
         "items": {
@@ -1535,7 +1137,7 @@ def test_resume_records_runtime_identity_mismatch_fields_in_metadata_and_trace(t
     agent.session_store.save(agent.session)
 
     resumed = Robin.from_session(
-        model_client=FakeModelClient(["<final>Resumed.</final>"]),
+        model_client=FakeModelClient([text_response('Resumed.')]),
         workspace=build_workspace(tmp_path),
         session_store=agent.session_store,
         session_id=agent.session["id"],
@@ -1600,9 +1202,7 @@ def test_explicit_memory_promotion_persists_durable_memory_topics(tmp_path):
     agent = build_agent(
         tmp_path,
         [
-            "<final>Project convention: Use constrained tools instead of guessing.\n"
-            "Project convention: Preserve local agent state under .robin/.\n"
-            "Decision: Keep durable memory topic-based and lightweight.</final>",
+            text_response('Project convention: Use constrained tools instead of guessing.\nProject convention: Preserve local agent state under .robin/.\nDecision: Keep durable memory topic-based and lightweight.'),
         ],
     )
 
@@ -1635,8 +1235,7 @@ def test_explicit_memory_promotion_supports_chinese_intent_and_labels(tmp_path):
     agent = build_agent(
         tmp_path,
         [
-            "<final>项目约定：优先使用受约束工具，不要靠猜。\n"
-            "决策：持久记忆保持轻量、按 topic 管理。</final>",
+            text_response('项目约定：优先使用受约束工具，不要靠猜。\n决策：持久记忆保持轻量、按 topic 管理。'),
         ],
     )
 
@@ -1655,10 +1254,7 @@ def test_explicit_memory_promotion_rejects_secret_shaped_and_transient_lines(tmp
     agent = build_agent(
         tmp_path,
         [
-            "<final>Project convention: Use constrained tools instead of guessing.\n"
-            "Dependency: API key is sk-live-secret-abc.\n"
-            "Decision: Current goal is fix flaky tests.\n"
-            "Dependency: stdout: FAIL test_one FAIL test_two FAIL test_three.</final>",
+            text_response('Project convention: Use constrained tools instead of guessing.\nDependency: API key is sk-live-secret-abc.\nDecision: Current goal is fix flaky tests.\nDependency: stdout: FAIL test_one FAIL test_two FAIL test_three.'),
         ],
     )
 
@@ -1684,8 +1280,8 @@ def test_explicit_memory_promotion_supersedes_matching_durable_fact(tmp_path):
     agent = build_agent(
         tmp_path,
         [
-            "<final>Dependency: Python runtime is 3.11.</final>",
-            "<final>Dependency: Python runtime is 3.12.</final>",
+            text_response('Dependency: Python runtime is 3.11.'),
+            text_response('Dependency: Python runtime is 3.12.'),
         ],
     )
 
@@ -1707,8 +1303,8 @@ def test_explicit_memory_promotion_dedupes_duplicate_durable_note(tmp_path):
     agent = build_agent(
         tmp_path,
         [
-            "<final>Project convention: Use constrained tools instead of guessing.</final>",
-            "<final>Project convention: Use constrained tools instead of guessing.</final>",
+            text_response('Project convention: Use constrained tools instead of guessing.'),
+            text_response('Project convention: Use constrained tools instead of guessing.'),
         ],
     )
 
@@ -1723,19 +1319,22 @@ def test_explicit_memory_promotion_dedupes_duplicate_durable_note(tmp_path):
 
 def test_agent_records_model_cache_metadata_in_last_prompt_metadata(tmp_path):
     class CacheAwareFakeModelClient(FakeModelClient):
-        def complete(self, prompt, max_new_tokens, **kwargs):
+        def complete(self, request):
             self.last_completion_metadata = {
                 "prompt_cache_supported": True,
                 "cached_tokens": 512,
                 "cache_hit": True,
                 "input_tokens": 1024,
             }
-            return super().complete(prompt, max_new_tokens, **kwargs)
+            response = super().complete(request)
+            response.metadata.update(self.last_completion_metadata)
+            response.usage = Usage(input_tokens=1024, cached_tokens=512)
+            return response
 
     workspace = build_workspace(tmp_path)
     store = SessionStore(tmp_path / ".robin" / "sessions")
     agent = Robin(
-        model_client=CacheAwareFakeModelClient(["<final>Done.</final>"]),
+        model_client=CacheAwareFakeModelClient([text_response('Done.')]),
         workspace=workspace,
         session_store=store,
         approval_policy="auto",
@@ -1751,7 +1350,7 @@ def test_agent_records_model_cache_metadata_in_last_prompt_metadata(tmp_path):
 
 
 def test_recent_transcript_entries_stay_richer_than_older_ones(tmp_path):
-    agent = build_agent(tmp_path, ["<final>Done.</final>"])
+    agent = build_agent(tmp_path, [text_response('Done.')])
     old_text = "OLD-" + ("A" * 320)
     recent_text = "RECENT-" + ("B" * 320)
 

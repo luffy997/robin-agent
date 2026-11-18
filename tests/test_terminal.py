@@ -7,6 +7,15 @@ from prompt_toolkit.output import DummyOutput
 from robin.terminal import SlashCompleter, build_prompt_session
 
 
+def test_toolbar_reads_current_status():
+    status = ["before"]
+    with create_pipe_input() as pipe:
+        session = build_prompt_session(status_callback=lambda: status, input=pipe, output=DummyOutput())
+        assert "before" in session.bottom_toolbar()
+        status[0] = "after"
+        assert "after" in session.bottom_toolbar()
+
+
 def test_slash_menu_filters_commands():
     completer = SlashCompleter()
     assert [c.text for c in completer.get_completions(Document("/"), None)] == [

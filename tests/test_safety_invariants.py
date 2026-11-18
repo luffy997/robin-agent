@@ -1,3 +1,4 @@
+from robin.providers.types import text_response, tool_response
 import os
 import shlex
 import sys
@@ -194,10 +195,10 @@ def test_delegate_child_is_read_only(tmp_path):
     agent = build_agent(
         tmp_path,
         [
-            '<tool>{"name":"delegate","args":{"task":"write a file","max_steps":2}}</tool>',
-            '<tool>{"name":"write_file","args":{"path":"child-was-not-allowed.txt","content":"nope"}}</tool>',
-            "<final>child done</final>",
-            "<final>parent done</final>",
+            tool_response('delegate', {'task': 'write a file', 'max_steps': 2}),
+            tool_response('write_file', {'path': 'child-was-not-allowed.txt', 'content': 'nope'}),
+            text_response('child done'),
+            text_response('parent done'),
         ],
     )
 

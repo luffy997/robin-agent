@@ -1,10 +1,14 @@
 from pathlib import Path
 
 import robin
+from robin.providers import types as model_types
 from robin import Robin, SessionStore, WorkspaceContext, build_agent, build_arg_parser, build_welcome, main
 
 
 def test_public_api_exports_current_names_only():
+    for name in ("ModelClient", "ModelRequest", "ModelResponse", "ToolCall", "ToolResult", "Usage"):
+        assert name in robin.__all__
+        assert getattr(robin, name) is getattr(model_types, name)
     assert Robin is not None
     assert SessionStore is not None
     assert WorkspaceContext is not None

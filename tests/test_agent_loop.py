@@ -1,3 +1,4 @@
+from robin.providers.types import ModelError, ModelResponse, text_response, tool_response
 import json
 
 import pytest
@@ -24,8 +25,8 @@ def test_agent_loop_runs_same_control_flow_as_robin_ask(tmp_path):
     agent = build_agent(
         tmp_path,
         [
-            '<tool>{"name":"read_file","args":{"path":"hello.txt","start":1,"end":1}}</tool>',
-            "<final>Done.</final>",
+            tool_response('read_file', {'path': 'hello.txt', 'start': 1, 'end': 1}),
+            text_response('Done.'),
         ],
     )
 
@@ -37,7 +38,7 @@ def test_agent_loop_runs_same_control_flow_as_robin_ask(tmp_path):
 
 
 def test_robin_ask_delegates_to_agent_loop(tmp_path):
-    agent = build_agent(tmp_path, ["<final>Facade works.</final>"])
+    agent = build_agent(tmp_path, [text_response('Facade works.')])
 
     assert agent.ask("Use facade") == "Facade works."
 
@@ -45,12 +46,12 @@ def test_robin_ask_delegates_to_agent_loop(tmp_path):
 def test_agent_loop_reserves_a_final_answer_after_tool_budget_is_exhausted(tmp_path):
     (tmp_path / "facts.txt").write_text("one\ntwo\nthree\nfour\nfive\nsix\n", encoding="utf-8")
     tool_outputs = [
-        f'<tool>{{"name":"read_file","args":{{"path":"facts.txt","start":{line},"end":{line}}}}}</tool>'
+        tool_response("read_file", {"path": "facts.txt", "start": line, "end": line})
         for line in range(1, 7)
     ]
     agent = build_agent(
         tmp_path,
-        [*tool_outputs, "<final>All six facts were inspected.</final>"],
+        [*tool_outputs, text_response('All six facts were inspected.')],
         max_steps=6,
     )
 
@@ -71,15 +72,12 @@ def test_agent_loop_reserves_a_final_answer_after_tool_budget_is_exhausted(tmp_p
 def test_agent_loop_persists_model_failure_before_reraising(tmp_path):
     class FailingModelClient:
         supports_prompt_cache = False
-        last_completion_metadata = {
-            "stop_reason": "max_tokens",
-            "content_block_types": ["thinking"],
-        }
 
         def complete(self, *args, **kwargs):
-            raise RuntimeError(
+            raise ModelError(
                 "Anthropic-compatible response ended before a text block "
-                "(stop_reason=max_tokens, content_types=thinking)"
+                "(stop_reason=max_tokens, content_types=thinking)",
+                ModelResponse(metadata={"stop_reason": "max_tokens", "content_block_types": ["thinking"]})
             )
 
     agent = build_agent(tmp_path, [])
