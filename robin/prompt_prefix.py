@@ -43,16 +43,6 @@ def build_prompt_prefix(workspace, tools, built_at=None):
         risk = "approval required" if tool["risky"] else "safe"
         tool_lines.append(f"- {name}({fields}) [{risk}] {tool['description']}")
     tool_text = "\n".join(tool_lines)
-    examples = "\n".join(
-        [
-            '<tool>{"name":"list_files","args":{"path":"."}}</tool>',
-            '<tool>{"name":"read_file","args":{"path":"README.md","start":1,"end":80}}</tool>',
-            '<tool name="write_file" path="binary_search.py"><content>def binary_search(nums, target):\n    return -1\n</content></tool>',
-            '<tool name="patch_file" path="binary_search.py"><old_text>return -1</old_text><new_text>return mid</new_text></tool>',
-            '<tool>{"name":"run_shell","args":{"command":"uv run --with pytest python -m pytest -q","timeout":20}}</tool>',
-            "<final>Done.</final>",
-        ]
-    )
     # prefix 可以理解成 agent 的“工作手册”：
     # 它是谁、工具怎么调用、当前仓库是什么状态，都写在这里。
     text = textwrap.dedent(
@@ -61,16 +51,8 @@ def build_prompt_prefix(workspace, tools, built_at=None):
 
         Rules:
         - Use tools instead of guessing about the workspace.
-        - Return exactly one <tool>...</tool> or one <final>...</final>.
-        - Tool calls must look like:
-          <tool>{{"name":"tool_name","args":{{...}}}}</tool>
-        - For write_file and patch_file with multi-line text, prefer XML style:
-          <tool name="write_file" path="file.py"><content>...</content></tool>
-        - Final answers must look like:
-          <final>your answer</final>
-        - Write only the tool call or final answer, without reasoning, analysis, or commentary about these rules.
-        - Answer in the user's language. Questions about Robin are ordinary questions; explain behavior directly.
-        - The final answer must have a complete closing tag, even when discussing protocol tags as literal text.
+        - Use native tool calls for actions. Plain text is your final answer.
+        - Answer in the user's language. Do not expose internal reasoning.
         - Never invent tool results.
         - Keep answers concise and concrete.
         - If the user asks you to create or update a specific file and the path is clear, use write_file or patch_file instead of repeatedly listing files.
@@ -82,9 +64,6 @@ def build_prompt_prefix(workspace, tools, built_at=None):
 
         Tools:
         {tool_text}
-
-        Valid response examples:
-        {examples}
 
         {workspace.text()}
         """

@@ -23,6 +23,8 @@ from .security import REDACTED_VALUE
 from .session_store import SessionStore
 from .tool_context import ToolContext
 from .tool_executor import ToolExecutor
+from .usage import add_usage, empty_usage
+from .providers.limits import DEFAULT_CONTEXT_WINDOW, DEFAULT_MAX_NEW_TOKENS, positive_integer
 from . import tools as toolkit
 from .workspace import IGNORED_PATH_NAMES, MAX_HISTORY, WorkspaceContext, clip, now
 
@@ -60,7 +62,7 @@ class Robin:
         run_store=None,
         approval_policy="ask",
         max_steps=6,
-        max_new_tokens=512,
+        max_new_tokens=DEFAULT_MAX_NEW_TOKENS,
         depth=0,
         max_depth=1,
         read_only=False,
@@ -68,6 +70,7 @@ class Robin:
         secret_env_names=None,
         feature_flags=None,
         allowed_tools=None,
+        context_window=DEFAULT_CONTEXT_WINDOW,
     ):
         """初始化对象并保存运行所需依赖。"""
         self.model_client = model_client
@@ -76,7 +79,8 @@ class Robin:
         self.session_store = session_store
         self.approval_policy = approval_policy
         self.max_steps = max_steps
-        self.max_new_tokens = max_new_tokens
+        self.max_new_tokens = positive_integer(max_new_tokens, "max_new_tokens")
+        self.context_window = positive_integer(context_window, "context_window")
         self.depth = depth
         self.max_depth = max_depth
         self.read_only = read_only
@@ -94,6 +98,15 @@ class Robin:
             "history": [],
             "memory": memorylib.default_memory_state(),
         }
+        self.session.setdefault("usage", empty_usage(historical_unknown=session is not None))
+        self.turn_usage = empty_usage()
+        self._usage_parent = None
+        if self.session.get("format_version") != 2:
+            old_history = self.session.get("history", [])
+            if old_history:
+                self.session["legacy_summary"] = "Legacy session history (summary):\n" + clip(json.dumps(old_history, ensure_ascii=False), 4000)
+            self.session["history"] = []
+            self.session["format_version"] = 2
         self._ensure_session_shape()
         self.memory = memorylib.LayeredMemory(
             self.session.setdefault("memory", memorylib.default_memory_state()),
@@ -636,6 +649,13 @@ class Robin:
             spawn_delegate=self.spawn_delegate,
         )
 
+    def record_usage(self, metadata):
+        add_usage(self.turn_usage, metadata)
+        add_usage(self.session["usage"], metadata)
+        self.session_store.save(self.session)
+        if self._usage_parent is not None:
+            self._usage_parent.record_usage(metadata)
+
     def spawn_delegate(self, args):
         """启动一个受限只读子 agent 执行调查任务。"""
         task = str(args.get("task", "")).strip()
@@ -647,6 +667,7 @@ class Robin:
             approval_policy="never",
             max_steps=int(args.get("max_steps", 3)),
             max_new_tokens=self.max_new_tokens,
+            context_window=self.context_window,
             depth=self.depth + 1,
             max_depth=self.max_depth,
             read_only=True,
@@ -655,6 +676,7 @@ class Robin:
         )
         # 委派的目标是“调查”，不是“放权执行”。
         # 子 agent 以只读方式运行、步数更少，最后只把结论文本返回给父 agent。
+        child._usage_parent = self
         child.session["memory"]["task"] = task
         child.session["memory"]["notes"] = [clip(self.history_text(), 300)]
         return "delegate_result:\n" + child.ask(task)
@@ -701,156 +723,12 @@ class Robin:
             return False
         return answer.strip().lower() in {"y", "yes"}
 
-    @staticmethod
-    def parse(raw):
-        """把模型原始输出解析成 runtime 可执行的动作或最终答案。
-
-        为什么存在：
-        模型输出首先是自然语言文本，而 runtime 需要的是结构化决策：
-        “这是工具调用”还是“这是最终答案”。如果没有这层解析，后面的工具校验、
-        审批和执行链路就没法可靠工作。
-
-        输入 / 输出：
-        - 输入：模型返回的原始文本 `raw`
-        - 输出：`(kind, payload)`，其中 `kind` 可能是 `tool`、`final`、`retry`
-
-        在 agent 链路里的位置：
-        它位于 `model_client.complete()` 之后、`run_tool()` 之前，是模型输出
-        进入平台控制流的第一道结构化关口。
-        """
-        raw = str(raw).strip()
-        # Some backends include reasoning blocks in their text response.
-        raw = re.sub(r"<think>.*?</think>", "", raw, flags=re.S).strip()
-        if "<think>" in raw:
-            return "retry", Robin.retry_notice("model returned an incomplete reasoning block")
-        # Match the envelope, so quoted protocol tags inside an answer stay text.
-        final_match = re.fullmatch(r"<final>(.*)</final>", raw, re.S)
-        if final_match:
-            final = final_match.group(1).strip()
-            if final:
-                return "final", final
-            return "retry", Robin.retry_notice("model returned an empty <final> answer")
-        if "<final>" in raw and not raw.startswith("<tool"):
-            return "retry", Robin.retry_notice("final answer must have a complete outer <final> envelope")
-        # 这里支持两种工具格式：
-        # 1. <tool>...</tool> 里包 JSON，适合简短调用
-        # 2. XML 风格属性/子标签，适合写文件这类多行内容
-        # 当前解析规则是
-        """
-        当前解析规则是：
-        1. 如果响应里先出现 <tool> 或 <tool ...>，就判定为 kind == "tool"，继续执行工具。
-        2. 如果响应里有 <final>，且 <final> 比 <tool> 更早，或者没有工具标签，就判定为 kind == "final"，结束。
-        3. 如果没有 <tool>，也没有 <final>，但有普通文本，也会判定为 kind == "final"，结束。
-        4. 如果工具格式坏了、final 空了、响应空了，才是 kind == "retry"。
-        如果有tool也有final，就还是tool
-        """
-        if "<tool>" in raw and ("<final>" not in raw or raw.find("<tool>") < raw.find("<final>")):
-            body = Robin.extract(raw, "tool")
-            try:
-                payload = json.loads(body)
-            except Exception:
-                return "retry", Robin.retry_notice("model returned malformed tool JSON")
-            if not isinstance(payload, dict):
-                return "retry", Robin.retry_notice("tool payload must be a JSON object")
-            if not str(payload.get("name", "")).strip():
-                return "retry", Robin.retry_notice("tool payload is missing a tool name")
-            args = payload.get("args", {})
-            if args is None:
-                payload["args"] = {}
-            elif not isinstance(args, dict):
-                return "retry", Robin.retry_notice()
-            return "tool", payload
-        if "<tool" in raw and ("<final>" not in raw or raw.find("<tool") < raw.find("<final>")):
-            payload = Robin.parse_xml_tool(raw)
-            if payload is not None:
-                return "tool", payload
-            return "retry", Robin.retry_notice()
-        if "<final>" in raw:
-            final = Robin.extract(raw, "final").strip()
-            if final:
-                return "final", final
-            return "retry", Robin.retry_notice("model returned an empty <final> answer")
-        raw = raw.strip()
-        if raw:
-            return "final", raw
-        return "retry", Robin.retry_notice("model returned an empty response")
-
-    @staticmethod
-    def retry_notice(problem=None):
-        """生成提示模型修正输出格式的 runtime notice。"""
-        prefix = "Runtime notice"
-        if problem:
-            prefix += f": {problem}"
-        else:
-            prefix += ": model returned malformed tool output"
-        return (
-            f"{prefix}. Reply with a valid <tool> call or a non-empty <final> answer. "
-            'For multi-line files, prefer <tool name="write_file" path="file.py"><content>...</content></tool>.'
-        )
-
-    @staticmethod
-    def parse_xml_tool(raw):
-        """解析 XML 风格的工具调用，并转换成统一的工具 payload。"""
-        match = re.search(r"<tool(?P<attrs>[^>]*)>(?P<body>.*?)</tool>", raw, re.S)
-        if not match:
-            return None
-        attrs = Robin.parse_attrs(match.group("attrs"))
-        name = str(attrs.pop("name", "")).strip()
-        if not name:
-            return None
-
-        body = match.group("body")
-        args = dict(attrs)
-        for key in ("content", "old_text", "new_text", "command", "task", "pattern", "path"):
-            if f"<{key}>" in body:
-                args[key] = Robin.extract_raw(body, key)
-
-        body_text = body.strip("\n")
-        if name == "write_file" and "content" not in args and body_text:
-            args["content"] = body_text
-        if name == "delegate" and "task" not in args and body_text:
-            args["task"] = body_text.strip()
-        return {"name": name, "args": args}
-
-    @staticmethod
-    def parse_attrs(text):
-        """解析 XML 标签上的简单字符串属性。"""
-        attrs = {}
-        for match in re.finditer(r"""([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(?:"([^"]*)"|'([^']*)')""", text):
-            attrs[match.group(1)] = match.group(2) if match.group(2) is not None else match.group(3)
-        return attrs
-
-    @staticmethod
-    def extract(text, tag):
-        """提取指定标签内的文本，并去掉首尾空白。"""
-        start_tag = f"<{tag}>"
-        end_tag = f"</{tag}>"
-        start = text.find(start_tag)
-        if start == -1:
-            return text
-        start += len(start_tag)
-        end = text.find(end_tag, start)
-        if end == -1:
-            return text[start:].strip()
-        return text[start:end].strip()
-
-    @staticmethod
-    def extract_raw(text, tag):
-        """提取指定标签内的原始文本，保留内容空白。"""
-        start_tag = f"<{tag}>"
-        end_tag = f"</{tag}>"
-        start = text.find(start_tag)
-        if start == -1:
-            return text
-        start += len(start_tag)
-        end = text.find(end_tag, start)
-        if end == -1:
-            return text[start:]
-        return text[start:end]
-
     def reset(self):
         """清空 session 历史和记忆并保存。"""
+        self.session["usage"] = empty_usage()
+        self.turn_usage = empty_usage()
         self.session["history"] = []
+        self.session.pop("legacy_summary", None)
         self.session["memory"].clear()
         self.session["memory"].update(memorylib.default_memory_state())
         self.memory = memorylib.LayeredMemory(self.session["memory"], workspace_root=self.root)

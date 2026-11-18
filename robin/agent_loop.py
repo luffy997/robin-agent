@@ -1,6 +1,11 @@
 """Agent control loop extracted from the runtime facade."""
 
+import json
 import time
+from dataclasses import asdict
+from .usage import empty_usage
+from .providers.context import build_request
+from .providers.types import ModelError, ModelResponse, ToolResult
 
 from .checkpoint import CHECKPOINT_NONE_STATUS, CHECKPOINT_PARTIAL_STALE_STATUS, CHECKPOINT_WORKSPACE_MISMATCH_STATUS
 from .task_state import TaskState
@@ -59,36 +64,55 @@ class AgentLoop:
                 "purpose": purpose,
             },
         )
-        prompt_cache_key = None
-        prompt_cache_retention = None
-        # 只有支持 prompt cache 的 provider 才接收缓存参数，避免把私有扩展参数传给普通 client。
-        if getattr(agent.model_client, "supports_prompt_cache", False):
-            prompt_cache_key = prompt_metadata.get("prompt_cache_key")
-            prompt_cache_retention = "in_memory"
         model_started_at = time.monotonic()
+        model_called = False
         try:
-            raw = agent.model_client.complete(
-                prompt,
-                agent.max_new_tokens,
-                prompt_cache_key=prompt_cache_key,
-                prompt_cache_retention=prompt_cache_retention,
-            )
+            request = build_request(agent, prompt, prompt_metadata, finalization=purpose == "finalization")
+            model_called = True
+            response = agent.model_client.complete(request)
+            if not isinstance(response, ModelResponse):
+                raise ModelError("Model client must return ModelResponse")
         except Exception as exc:
-            # 尽量保留 provider 返回的失败元数据；报告和 trace 会用它定位是限流、鉴权还是网络问题。
-            completion_metadata = dict(getattr(agent.model_client, "last_completion_metadata", {}) or {})
-            if completion_metadata:
-                prompt_metadata.update(completion_metadata)
+            failure = getattr(exc, "response", None)
+            for usage in failure.prior_usages if failure else []:
+                agent.record_usage(asdict(usage))
+            completion_metadata = failure.usage_metadata() if failure else {}
+            if model_called:
+                agent.record_usage(completion_metadata)
+            prompt_metadata.update(completion_metadata)
             agent.last_completion_metadata = completion_metadata
             agent.last_prompt_metadata = prompt_metadata
             self._persist_model_failure(task_state, user_message, exc, run_started_at, prompt_metadata)
-            raise
-        completion_metadata = dict(getattr(agent.model_client, "last_completion_metadata", {}) or {})
-        if completion_metadata:
-            prompt_metadata.update(completion_metadata)
+            raise RuntimeError(agent.redact_text(str(exc))) from exc
+        completion_metadata = response.usage_metadata()
+        for usage in response.prior_usages:
+            agent.record_usage(asdict(usage))
+        agent.record_usage(completion_metadata)
+        prompt_metadata.update(completion_metadata)
         agent.last_completion_metadata = completion_metadata
         agent.last_prompt_metadata = prompt_metadata
-        # parse 是模型文本协议边界：后续循环只处理 tool / retry / final 三类结构化结果。
-        kind, payload = agent.parse(raw)
+        if response.stop_reason not in {"stop", "tool_use"}:
+            message = f"Model response stopped: {response.stop_reason}"
+            if response.stop_reason == "length":
+                message += (
+                    f" (output truncated; configured limit: {request.max_output_tokens} tokens). "
+                    "No tools from this response were executed. "
+                    "Restart with a larger --max-new-tokens value "
+                    f"(for example, {max(8192, request.max_output_tokens * 2)}) "
+                    "and --resume latest, then ask to continue. "
+                    "If truncation persists, check the gateway/model output limit."
+                )
+            exc = ModelError(message, response)
+            self._persist_model_failure(task_state, user_message, exc, run_started_at, prompt_metadata)
+            raise exc
+        if response.tool_calls:
+            kind, payload = "tool", response.tool_calls
+        elif response.text.strip() and response.stop_reason == "stop":
+            kind, payload = "final", response.text
+        else:
+            kind, payload = "retry", "Return a non-empty answer or a valid native tool call."
+        if response.reasoning:
+            agent.emit_trace(task_state, "model_reasoning", {"reasoning": agent.redact_text(response.reasoning)})
         agent.emit_trace(
             task_state,
             "model_parsed",
@@ -99,12 +123,13 @@ class AgentLoop:
                 "purpose": purpose,
             },
         )
-        return raw, kind, payload
+        return response, kind, payload
 
-    def _finish_success(self, task_state, user_message, final, run_started_at):
+    def _finish_success(self, task_state, user_message, final, run_started_at, response):
         """完成一次成功运行并写入历史、checkpoint、trace 和 report。"""
         agent = self.agent
-        agent.record({"role": "assistant", "content": final, "created_at": now()})
+        agent.record({"role": "assistant", "content": final, "reasoning": response.reasoning,
+                      "replay": response.replay, "created_at": now()})
         task_state.finish_success(final)
         # 成功答案会尝试沉淀进 durable memory，供后续任务从长期记忆中召回。
         agent.promote_durable_memory(user_message, final)
@@ -135,6 +160,7 @@ class AgentLoop:
         """执行当前对象负责的主流程。"""
         agent = self.agent
         run_started_at = time.monotonic()
+        agent.turn_usage = empty_usage()
         agent.memory.set_task_summary(user_message)
         # 用户消息先入历史，再构建 task_state；后续 prompt 会看到本轮请求和之前上下文。
         agent.record({"role": "user", "content": user_message, "created_at": now()})
@@ -228,49 +254,31 @@ class AgentLoop:
                 run_started_at,
                 purpose="action",
             )
-
-
             if kind == "tool":
-                # 模型只能提出工具调用；真正执行前还会经过 ToolExecutor 的权限和参数校验。
-                tool_steps += 1
-                name = payload.get("name", "")
-                args = payload.get("args", {})
-                task_state.record_tool(name)
-                tool_started_at = time.monotonic()
-                tool_result = agent.execute_tool(name, args)
-                result = tool_result.content
-                agent.record(
-                    {
-                        "role": "tool",
-                        "name": name,
-                        "args": args,
-                        "content": result,
-                        "created_at": now(),
-                    }
-                )
-                agent.run_store.write_task_state(task_state)
-                agent.emit_trace(
-                    task_state,
-                    "tool_executed",
-                    {
-                        "name": name,
-                        "args": args,
-                        "result": clip(result, 500),
-                        "duration_ms": int((time.monotonic() - tool_started_at) * 1000),
-                        **dict(tool_result.metadata or {}),
-                    },
-                )
-                checkpoint = agent.create_checkpoint(task_state, user_message, trigger="tool_executed")
-                # 每次工具执行后都落一次 checkpoint，保证长任务中断后能从最近证据继续。
-                agent.run_store.write_task_state(task_state)
-                agent.emit_trace(
-                    task_state,
-                    "checkpoint_created",
-                    {
-                        "checkpoint_id": checkpoint["checkpoint_id"],
-                        "trigger": "tool_executed",
-                    },
-                )
+                agent.record({"role": "assistant", "content": raw.text,
+                              "tool_calls": [{"id": call.id, "type": "function", "function": {
+                                  "name": call.name, "arguments": json.dumps(call.arguments)}} for call in payload],
+                              "reasoning": raw.reasoning, "replay": raw.replay, "created_at": now()})
+                for call in payload:
+                    name, args = call.name, call.arguments
+                    tool_started_at = time.monotonic()
+                    if tool_steps >= agent.max_steps:
+                        result, result_metadata = "Tool budget exhausted; call not executed.", {"budget_denied": True}
+                    else:
+                        tool_steps += 1
+                        task_state.record_tool(name)
+                        tool_result = agent.execute_tool(name, args)
+                        result, result_metadata = tool_result.content, tool_result.metadata or {}
+                    agent.record({"role": "tool", "args": args,
+                                  **asdict(ToolResult(call.id, name, result)), "created_at": now()})
+                    agent.run_store.write_task_state(task_state)
+                    agent.emit_trace(task_state, "tool_executed", {
+                        "name": name, "args": args, "tool_call_id": call.id, "result": clip(result, 500),
+                        "duration_ms": int((time.monotonic() - tool_started_at) * 1000), **result_metadata})
+                    checkpoint = agent.create_checkpoint(task_state, user_message, trigger="tool_executed")
+                    agent.run_store.write_task_state(task_state)
+                    agent.emit_trace(task_state, "checkpoint_created", {
+                        "checkpoint_id": checkpoint["checkpoint_id"], "trigger": "tool_executed"})
                 continue
 
             if kind == "retry":
@@ -280,8 +288,8 @@ class AgentLoop:
                 agent.run_store.write_task_state(task_state)
                 continue
 
-            final = (payload or raw).strip()
-            return self._finish_success(task_state, user_message, final, run_started_at)
+            final = payload.strip()
+            return self._finish_success(task_state, user_message, final, run_started_at, raw)
 
         if tool_steps >= agent.max_steps:
             # 工具预算耗尽后还会再问模型一次，但这次只能总结，不能继续行动。
@@ -293,7 +301,7 @@ class AgentLoop:
             prompt += (
                 "\n\nRuntime notice: the tool budget is exhausted. Do not call another tool. "
                 "Use the evidence already present in the tool history and return exactly one "
-                "non-empty <final>...</final> answer."
+                "non-empty plain text answer."
             )
             prompt_metadata["finalization"] = True
             agent.emit_trace(
@@ -314,8 +322,8 @@ class AgentLoop:
                 purpose="finalization",
             )
             if kind == "final":
-                final = (payload or raw).strip()
-                return self._finish_success(task_state, user_message, final, run_started_at)
+                final = payload.strip()
+                return self._finish_success(task_state, user_message, final, run_started_at, raw)
 
         # 到这里说明模型既没有在预算内给出最终答案，也没有在最终化请求里按协议收尾。
         # 仍然写 checkpoint，是为了下一次运行可以从“已探索的信息”继续，而不是从零开始。

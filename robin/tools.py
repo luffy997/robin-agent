@@ -4,6 +4,7 @@
 如何做参数校验，以及最终如何执行，都是在这里定义的。
 """
 
+import json
 import shutil
 import subprocess
 import textwrap
@@ -56,13 +57,13 @@ def legal_tool_names():
     return set(BASE_TOOL_SPECS) | {"delegate"}
 
 TOOL_EXAMPLES = {
-    "list_files": '<tool>{"name":"list_files","args":{"path":"."}}</tool>',
-    "read_file": '<tool>{"name":"read_file","args":{"path":"README.md","start":1,"end":80}}</tool>',
-    "search": '<tool>{"name":"search","args":{"pattern":"binary_search","path":"."}}</tool>',
-    "run_shell": '<tool>{"name":"run_shell","args":{"command":"uv run --with pytest python -m pytest -q","timeout":20}}</tool>',
-    "write_file": '<tool name="write_file" path="binary_search.py"><content>def binary_search(nums, target):\n    return -1\n</content></tool>',
-    "patch_file": '<tool name="patch_file" path="binary_search.py"><old_text>return -1</old_text><new_text>return mid</new_text></tool>',
-    "delegate": '<tool>{"name":"delegate","args":{"task":"inspect README.md","max_steps":3}}</tool>',
+    "list_files": {"path": "."},
+    "read_file": {"path": "README.md", "start": 1, "end": 80},
+    "search": {"pattern": "binary_search", "path": "."},
+    "run_shell": {"command": "uv run --with pytest python -m pytest -q", "timeout": 20},
+    "write_file": {"path": "example.py", "content": "print('hello')\n"},
+    "patch_file": {"path": "example.py", "old_text": "hello", "new_text": "world"},
+    "delegate": {"task": "inspect README.md", "max_steps": 3},
 }
 
 
@@ -83,7 +84,7 @@ def build_tool_registry(context):
 
 def tool_example(name):
     """返回指定工具的示例调用文本。"""
-    return TOOL_EXAMPLES.get(name, "")
+    return json.dumps({"name": name, "arguments": TOOL_EXAMPLES[name]}) if name in TOOL_EXAMPLES else ""
 
 
 def validate_tool(context, name, args):

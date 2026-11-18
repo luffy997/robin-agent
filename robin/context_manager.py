@@ -459,6 +459,7 @@ class ContextManager:
     def _assemble_prompt(self, rendered):
         # 顺序是刻意设计的：稳定规则放前面，最新请求放最后。
         """按固定顺序把各 section 拼成最终 prompt。"""
+        self.model_system_text = "\n\n".join(rendered[key].rendered for key in ("prefix", "memory", "relevant_memory"))
         return "\n\n".join(
             [
                 rendered["prefix"].rendered,
