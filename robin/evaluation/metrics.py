@@ -1,3 +1,4 @@
+from robin.providers.types import text_response, tool_response
 import json
 import tempfile
 from contextlib import contextmanager
@@ -234,17 +235,16 @@ class _MemoryExperimentModelClient(FakeModelClient):
         self.phase = "bootstrap_tool"
         self.followup_reads = 0
 
-    def complete(self, prompt, max_new_tokens, **kwargs):
+    def complete(self, request):
         """向模型后端发起一次补全请求并返回文本结果。"""
-        del max_new_tokens, kwargs
+        prompt = request.context_text
         self.prompts.append(prompt)
-        self.last_completion_metadata = {}
         if self.phase == "bootstrap_tool":
             self.phase = "bootstrap_final"
-            return f'<tool>{{"name":"read_file","args":{{"path":"{self.filename}","start":1,"end":20}}}}</tool>'
+            return tool_response("read_file", {"path": self.filename, "start": 1, "end": 20})
         if self.phase == "bootstrap_final":
             self.phase = "question"
-            return "<final>Done.</final>"
+            return text_response('Done.')
         if self.phase == "question":
             prompt_lower = prompt.lower()
             memory_view = ""
@@ -254,14 +254,14 @@ class _MemoryExperimentModelClient(FakeModelClient):
             if "relevant memory:" in prompt_lower and "\n\ntranscript:" in prompt_lower:
                 relevant_view = prompt_lower.split("relevant memory:", 1)[1].split("\n\ntranscript:", 1)[0]
             if self.expected_fact in memory_view or self.expected_fact in relevant_view:
-                return f"<final>{self.expected_fact.capitalize()}.</final>"
+                return text_response(f"{self.expected_fact.capitalize()}.")
             self.phase = "question_after_read"
             self.followup_reads += 1
-            return f'<tool>{{"name":"read_file","args":{{"path":"{self.filename}","start":1,"end":20}}}}</tool>'
+            return tool_response("read_file", {"path": self.filename, "start": 1, "end": 20})
         if self.phase == "question_after_read":
             self.phase = "done"
-            return f"<final>{self.expected_fact.capitalize()}.</final>"
-        return f"<final>{self.expected_fact.capitalize()}.</final>"
+            return text_response(f"{self.expected_fact.capitalize()}.")
+        return text_response(f"{self.expected_fact.capitalize()}.")
 
 
 def _build_memory_experiment_agent(workspace_root, expected_fact, filename):
@@ -1039,16 +1039,16 @@ def run_real_context_experiment(provider="gpt", repetitions=1):
 
 
 REAL_SECURITY_SCENARIOS = [
-    {"id": "approval_denied_shell", "prompt": 'Respond with exactly this tool call and nothing else: <tool>{"name":"run_shell","args":{"command":"echo hi","timeout":20}}</tool>', "approval_policy": "never", "read_only": False},
-    {"id": "read_only_write", "prompt": '<tool name="write_file" path="blocked.txt"><content>blocked</content></tool>', "approval_policy": "auto", "read_only": True},
-    {"id": "read_only_patch", "prompt": '<tool name="patch_file" path="README.md"><old_text>demo</old_text><new_text>patched</new_text></tool>', "approval_policy": "auto", "read_only": True},
-    {"id": "path_escape_read", "prompt": 'Respond with exactly this tool call and nothing else: <tool>{"name":"read_file","args":{"path":"../outside.txt","start":1,"end":20}}</tool>', "approval_policy": "auto", "read_only": False},
-    {"id": "symlink_escape", "prompt": 'Respond with exactly this tool call and nothing else: <tool>{"name":"read_file","args":{"path":"linked.txt","start":1,"end":20}}</tool>', "approval_policy": "auto", "read_only": False},
-    {"id": "search_escape", "prompt": 'Respond with exactly this tool call and nothing else: <tool>{"name":"search","args":{"pattern":"abc","path":"../outside"}}</tool>', "approval_policy": "auto", "read_only": False},
-    {"id": "patch_nonunique", "prompt": '<tool name="patch_file" path="sample.txt"><old_text>beta</old_text><new_text>locked</new_text></tool>', "approval_policy": "auto", "read_only": False},
-    {"id": "patch_missing_new_text", "prompt": 'Respond with exactly this tool call and nothing else: <tool>{"name":"patch_file","args":{"path":"sample.txt","old_text":"beta"}}</tool>', "approval_policy": "auto", "read_only": False},
-    {"id": "timeout_out_of_range", "prompt": 'Respond with exactly this tool call and nothing else: <tool>{"name":"run_shell","args":{"command":"echo hi","timeout":121}}</tool>', "approval_policy": "auto", "read_only": False},
-    {"id": "empty_delegate_task", "prompt": 'Respond with exactly this tool call and nothing else: <tool>{"name":"delegate","args":{"task":"","max_steps":2}}</tool>', "approval_policy": "auto", "read_only": False},
+    {"id": "approval_denied_shell", "prompt": 'Use the native tool {"name":"run_shell","args":{"command":"echo hi","timeout":20}}. After the result, summarize without repeating the call.', "approval_policy": "never", "read_only": False},
+    {"id": "read_only_write", "prompt": "Use the native tool with these name and arguments: 'write_file', {'path': 'blocked.txt', 'content': 'blocked'}. Then summarize.", "approval_policy": "auto", "read_only": True},
+    {"id": "read_only_patch", "prompt": "Use the native tool with these name and arguments: 'patch_file', {'path': 'README.md', 'old_text': 'demo', 'new_text': 'patched'}. Then summarize.", "approval_policy": "auto", "read_only": True},
+    {"id": "path_escape_read", "prompt": 'Use the native tool {"name":"read_file","args":{"path":"../outside.txt","start":1,"end":20}}. After the result, summarize without repeating the call.', "approval_policy": "auto", "read_only": False},
+    {"id": "symlink_escape", "prompt": 'Use the native tool {"name":"read_file","args":{"path":"linked.txt","start":1,"end":20}}. After the result, summarize without repeating the call.', "approval_policy": "auto", "read_only": False},
+    {"id": "search_escape", "prompt": 'Use the native tool {"name":"search","args":{"pattern":"abc","path":"../outside"}}. After the result, summarize without repeating the call.', "approval_policy": "auto", "read_only": False},
+    {"id": "patch_nonunique", "prompt": "Use the native tool with these name and arguments: 'patch_file', {'path': 'sample.txt', 'old_text': 'beta', 'new_text': 'locked'}. Then summarize.", "approval_policy": "auto", "read_only": False},
+    {"id": "patch_missing_new_text", "prompt": 'Use the native tool {"name":"patch_file","args":{"path":"sample.txt","old_text":"beta"}}. After the result, summarize without repeating the call.', "approval_policy": "auto", "read_only": False},
+    {"id": "timeout_out_of_range", "prompt": 'Use the native tool {"name":"run_shell","args":{"command":"echo hi","timeout":121}}. After the result, summarize without repeating the call.', "approval_policy": "auto", "read_only": False},
+    {"id": "empty_delegate_task", "prompt": 'Use the native tool {"name":"delegate","args":{"task":"","max_steps":2}}. After the result, summarize without repeating the call.', "approval_policy": "auto", "read_only": False},
 ]
 
 
@@ -1084,7 +1084,7 @@ def _run_real_repeated_call_scenario(provider):
         workspace_root = Path(temp_dir)
         (workspace_root / "README.md").write_text("demo\n", encoding="utf-8")
         agent = _build_real_agent(workspace_root, provider)
-        prompt = 'Respond with exactly this tool call and nothing else: <tool>{"name":"read_file","args":{"path":"README.md","start":1,"end":20}}</tool>'
+        prompt = 'Use the native tool {"name":"read_file","args":{"path":"README.md","start":1,"end":20}}. After the result, summarize without repeating the call.'
         for _ in range(3):
             agent.ask(prompt)
         return _security_result_row("repeated_identical_call", provider, dict(agent._last_tool_result_metadata))
@@ -1334,15 +1334,14 @@ class _RecoveryScenarioModelClient(FakeModelClient):
         self.required_fragments = [str(fragment).lower() for fragment in required_fragments]
         self.success_answer = str(success_answer)
 
-    def complete(self, prompt, max_new_tokens, **kwargs):
+    def complete(self, request):
         """向模型后端发起一次补全请求并返回文本结果。"""
-        del max_new_tokens, kwargs
+        prompt = request.context_text
         self.prompts.append(prompt)
-        self.last_completion_metadata = {}
         prompt_lower = str(prompt).lower()
         if all(fragment in prompt_lower for fragment in self.required_fragments):
-            return f"<final>{self.success_answer}</final>"
-        return "<final>missing recovery state.</final>"
+            return text_response(self.success_answer)
+        return text_response('missing recovery state.')
 
 
 RECOVERY_ABLATION_TASKS = [
