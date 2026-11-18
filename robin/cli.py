@@ -18,9 +18,11 @@ if __package__ in (None, ""):
     sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from robin.config import load_project_env, provider_env
-from robin.providers.clients import AnthropicCompatibleModelClient, OllamaModelClient, OpenAICompatibleModelClient
+from robin.providers.clients import APIS, AnthropicCompatibleModelClient, OllamaModelClient, OpenAICompatibleModelClient
 from robin.runtime import Robin, SessionStore
+from robin.providers.limits import model_limits, positive_integer
 from robin.terminal import TerminalInput
+from robin.usage import status_lines
 from robin.workspace import WorkspaceContext, middle
 
 DEFAULT_SECRET_ENV_NAMES = (
@@ -39,13 +41,15 @@ DEFAULT_SECRET_ENV_NAMES = (
 )
 
 WELCOME_ART = (
-    "        /\\___/\\\\",
-    "       (  o o  )",
-    "       /   ^   \\\\",
-    "      /|       |\\\\",
+    "       .-~~~~~-.",
+    "     .'         '.",
+    "    /             \\",
+    "   |===============|",
+    "  __\\_____________/__",
+    " '-------------------'",
 )
 WELCOME_NAME = "robin"
-WELCOME_SUBTITLE = "local coding agent"
+WELCOME_SUBTITLE = "lightweight local coding agent"
 WELCOME_STATUS = "calm shell, ready for work"
 HELP_DETAILS = textwrap.dedent(
     """\
@@ -132,8 +136,10 @@ def _configured_secret_names(args):
 def _build_model_client(args):
     """根据 provider 配置创建对应的模型客户端。"""
     provider = _effective_provider(args)
+    api = getattr(args, "api", None) or provider_env("ROBIN_API")
+    options = {"api": api} if api else {}
     # CLI 只负责把 provider 选择翻译成具体 client。
-    # 真正的提示词格式、缓存支持、HTTP 协议差异，都封装在 models.py 里。
+    # 协议差异封装在 provider 适配层。
     if provider == "openai":
         model = _effective_model(args, provider)
         base_url = getattr(args, "base_url", None) or provider_env("ROBIN_OPENAI_API_BASE", ("OPENAI_API_BASE",), DEFAULT_OPENAI_BASE_URL)
@@ -142,6 +148,7 @@ def _build_model_client(args):
             ("OPENAI_API_KEY", "ROBIN_RIGHT_CODES_API_KEY", "RIGHT_CODES_API_KEY", "ROBIN_ANTHROPIC_API_KEY", "ANTHROPIC_API_KEY"),
         )
         return OpenAICompatibleModelClient(
+            **options,
             model=model,
             base_url=base_url,
             api_key=api_key,
@@ -156,6 +163,7 @@ def _build_model_client(args):
             ("ANTHROPIC_API_KEY", "ROBIN_RIGHT_CODES_API_KEY", "RIGHT_CODES_API_KEY", "ROBIN_OPENAI_API_KEY", "OPENAI_API_KEY"),
         )
         return AnthropicCompatibleModelClient(
+            **options,
             model=model,
             base_url=base_url,
             api_key=api_key,
@@ -167,20 +175,20 @@ def _build_model_client(args):
         base_url = getattr(args, "base_url", None) or provider_env("ROBIN_DEEPSEEK_API_BASE", ("DEEPSEEK_API_BASE",), DEFAULT_DEEPSEEK_BASE_URL)
         api_key = provider_env("ROBIN_DEEPSEEK_API_KEY", ("DEEPSEEK_API_KEY",))
         return AnthropicCompatibleModelClient(
+            **options,
             model=model,
             base_url=base_url,
             api_key=api_key,
             temperature=args.temperature,
             timeout=getattr(args, "openai_timeout", getattr(args, "ollama_timeout", 300)),
-            # Robin currently uses text-encoded tool calls and does not replay
-            # provider-native thinking blocks. Keep the default transport mode
-            # deterministic until that protocol is implemented end to end.
-            thinking={"type": "disabled"},
+            # 保留 DeepSeek 显式关闭推理的默认配置。
+            reasoning_disabled=True,
         )
 
     model = _effective_model(args, provider)
     host = getattr(args, "host", DEFAULT_OLLAMA_HOST)
     return OllamaModelClient(
+        **options,
         model=model,
         host=host,
         temperature=args.temperature,
@@ -263,6 +271,12 @@ def build_agent(args):
     configured_secret_names = _configured_secret_names(args)
     store = SessionStore(workspace.repo_root + "/.robin/sessions")
     model = _build_model_client(args)
+    provider = _effective_provider(args)
+    output_limit, context_window = model_limits(workspace.repo_root, provider, _effective_model(args, provider))
+    configured_output = getattr(args, "max_new_tokens", None) or provider_env("ROBIN_MAX_NEW_TOKENS")
+    configured_context = getattr(args, "context_window", None) or provider_env("ROBIN_CONTEXT_WINDOW")
+    output_limit = positive_integer(configured_output or output_limit, "max_new_tokens")
+    context_window = positive_integer(configured_context or context_window, "context_window")
     session_id = args.resume
     if session_id == "latest":
         session_id = store.latest()
@@ -274,7 +288,8 @@ def build_agent(args):
             session_id=session_id,
             approval_policy=args.approval,
             max_steps=args.max_steps,
-            max_new_tokens=args.max_new_tokens,
+            max_new_tokens=output_limit,
+            context_window=context_window,
             secret_env_names=configured_secret_names,
         )
     return Robin(
@@ -283,7 +298,8 @@ def build_agent(args):
         session_store=store,
         approval_policy=args.approval,
         max_steps=args.max_steps,
-        max_new_tokens=args.max_new_tokens,
+        max_new_tokens=output_limit,
+        context_window=context_window,
         secret_env_names=configured_secret_names,
     )
 
@@ -295,6 +311,7 @@ def build_arg_parser():
         description="Minimal coding agent for DeepSeek, OpenAI-compatible, Anthropic-compatible, or Ollama models.",
     )
     parser.add_argument("prompt", nargs="*", help="Optional one-shot prompt.")
+    parser.add_argument("--api", choices=APIS, default=None, help="Model API protocol (or ROBIN_API).")
     parser.add_argument("--cwd", default=".", help="Workspace directory.")
     parser.add_argument(
         "--provider",
@@ -321,7 +338,10 @@ def build_arg_parser():
         help="Extra environment variable names to treat as secrets for trace/report redaction.",
     )
     parser.add_argument("--max-steps", type=int, default=50, help="Maximum tool/model iterations per request.")
-    parser.add_argument("--max-new-tokens", type=int, default=512, help="Maximum model output tokens per step.")
+    parser.add_argument("--max-new-tokens", type=lambda v: positive_integer(v, "max-new-tokens"), default=None,
+                        help="Output token limit: CLI > ROBIN_MAX_NEW_TOKENS > model config > 16384.")
+    parser.add_argument("--context-window", type=lambda v: positive_integer(v, "context-window"), default=None,
+                        help="Context token limit: CLI > ROBIN_CONTEXT_WINDOW > model config > 128000.")
     parser.add_argument("--temperature", type=float, default=0.2, help="Sampling temperature sent to Ollama.")
     parser.add_argument("--top-p", type=float, default=0.9, help="Top-p sampling value sent to Ollama.")
     return parser
@@ -348,7 +368,7 @@ def main(argv=None):
                 return 1
         return 0
 
-    terminal = TerminalInput()
+    terminal = TerminalInput(status_callback=lambda: status_lines(agent.turn_usage, agent.session["usage"], agent.model_client))
     while True:
         # 交互模式：每次读取一条用户输入，交给同一个 agent，
         # 因此 session history 和 working memory 会跨轮延续。
