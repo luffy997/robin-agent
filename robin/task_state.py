@@ -15,6 +15,7 @@ STATUS_FAILED = "failed"
 
 STOP_REASON_FINAL_ANSWER_RETURNED = "final_answer_returned"
 STOP_REASON_STEP_LIMIT_REACHED = "step_limit_reached"
+STOP_REASON_BUDGET_EXHAUSTED = "budget_exhausted"
 STOP_REASON_RETRY_LIMIT_REACHED = "retry_limit_reached"
 STOP_REASON_MODEL_ERROR = "model_error"
 STOP_REASON_TOOL_TIMEOUT = "tool_timeout"
@@ -69,8 +70,8 @@ class TaskState:
         return self
 
     def record_tool(self, name):
-        # tool_steps 只统计真正进入执行阶段的工具调用次数。
-        """记录一次实际执行的工具调用。"""
+        # 校验和审批拒绝也占用预算；超预算的未执行调用不再计数。
+        """记录一次预算内工具调用尝试。"""
         self.tool_steps += 1
         self.last_tool = str(name or "")
         return self
@@ -91,6 +92,10 @@ class TaskState:
     def stop_retry_limit(self, final_answer=""):
         """用 retry limit 原因停止任务。"""
         return self.stop(STOP_REASON_RETRY_LIMIT_REACHED, final_answer=final_answer)
+
+    def stop_budget_exhausted(self, final_answer=""):
+        """预算收尾不改变任务未完成的事实。"""
+        return self.stop(STOP_REASON_BUDGET_EXHAUSTED, final_answer=final_answer)
 
     def stop_model_error(self, final_answer=""):
         """用模型错误原因把任务标记为失败。"""

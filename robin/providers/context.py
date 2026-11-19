@@ -99,7 +99,7 @@ def build_request(agent, prompt, metadata, finalization=False):
                 "content": "Tool budget exhausted. Summarize the available evidence without calling tools.",
             }
         )
-    definitions = tool_definitions(agent.tools)
+    definitions = [] if finalization else tool_definitions(agent.tools)
     limit, estimated_input = output_budget(messages, definitions, agent.max_new_tokens, agent.context_window)
     metadata.update({"requested_output_tokens": agent.max_new_tokens,
                      "effective_output_tokens": limit, "estimated_input_tokens": estimated_input,

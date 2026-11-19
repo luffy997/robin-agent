@@ -43,6 +43,31 @@ def test_robin_ask_delegates_to_agent_loop(tmp_path):
     assert agent.ask("Use facade") == "Facade works."
 
 
+@pytest.mark.parametrize("summary", [
+    text_response("summary"), text_response(""),
+    tool_response("write_file", {"path": "forbidden", "content": "bad"}),
+    ModelError("offline"), ModelResponse(stop_reason="length"),
+])
+def test_budget_stop_survives_all_summary_outcomes(tmp_path, summary, capsys):
+    agent = build_agent(tmp_path, [tool_response("list_files", {}), summary], max_steps=1)
+    final = agent.ask("inspect")
+    state = agent.current_task_state
+    notice = "工具预算已耗尽：1/1，任务未完成"
+    assert notice in capsys.readouterr().out
+    assert final.startswith(notice)
+    assert state.status == "stopped" and state.stop_reason == "budget_exhausted"
+    assert len(agent.model_client.requests) == 2
+    assert agent.model_client.requests[-1].tools == []
+    assert not (tmp_path / "forbidden").exists()
+    result = agent.execute_tool("write_file", {"path": "after", "content": "bad"})
+    assert result.metadata["tool_error_code"] == "budget_exhausted"
+    assert not (tmp_path / "after").exists()
+    report = json.loads(agent.run_store.report_path(state.run_id).read_text())
+    assert report["stop_reason"] == "budget_exhausted"
+    stored = json.loads(agent.run_store.task_state_path(state.run_id).read_text())
+    assert stored["stop_reason"] == "budget_exhausted"
+
+
 def test_agent_loop_reserves_a_final_answer_after_tool_budget_is_exhausted(tmp_path):
     (tmp_path / "facts.txt").write_text("one\ntwo\nthree\nfour\nfive\nsix\n", encoding="utf-8")
     tool_outputs = [
@@ -57,8 +82,10 @@ def test_agent_loop_reserves_a_final_answer_after_tool_budget_is_exhausted(tmp_p
 
     answer = agent.ask("Inspect all facts and summarize them")
 
-    assert answer == "All six facts were inspected."
-    assert agent.current_task_state.status == "completed"
+    assert answer == "工具预算已耗尽：6/6，任务未完成\n\nAll six facts were inspected."
+    assert agent.current_task_state.status == "stopped"
+    assert agent.current_task_state.stop_reason == "budget_exhausted"
+    assert agent.model_client.requests[-1].tools == []
     assert agent.current_task_state.tool_steps == 6
     assert agent.current_task_state.attempts == 7
     trace_path = agent.run_store.trace_path(agent.current_task_state)

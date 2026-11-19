@@ -84,7 +84,8 @@ class AgentLoop:
             prompt_metadata.update(completion_metadata)
             agent.last_completion_metadata = completion_metadata
             agent.last_prompt_metadata = prompt_metadata
-            self._persist_model_failure(task_state, user_message, exc, run_started_at, prompt_metadata)
+            if purpose != "finalization":
+                self._persist_model_failure(task_state, user_message, exc, run_started_at, prompt_metadata)
             raise RuntimeError(agent.redact_text(str(exc))) from exc
         completion_metadata = response.usage_metadata()
         for usage in response.prior_usages:
@@ -105,7 +106,8 @@ class AgentLoop:
                     "If truncation persists, check the gateway/model output limit."
                 )
             exc = ModelError(message, response)
-            self._persist_model_failure(task_state, user_message, exc, run_started_at, prompt_metadata)
+            if purpose != "finalization":
+                self._persist_model_failure(task_state, user_message, exc, run_started_at, prompt_metadata)
             raise exc
         if response.tool_calls:
             kind, payload = "tool", response.tool_calls
@@ -268,7 +270,6 @@ class AgentLoop:
                         result, result_metadata = "Tool budget exhausted; call not executed.", {"budget_denied": True}
                     else:
                         tool_steps += 1
-                        task_state.record_tool(name)
                         tool_result = agent.execute_tool(name, args)
                         result, result_metadata = tool_result.content, tool_result.metadata or {}
                     agent.record({"role": "tool", "args": args,
@@ -296,40 +297,37 @@ class AgentLoop:
         if tool_steps >= agent.max_steps:
             # 工具预算耗尽后还会再问模型一次，但这次只能总结，不能继续行动。
             # 这让 agent 有机会基于已有证据给出结果，而不是直接丢一个 step limit。
+            notice = f"工具预算已耗尽：{task_state.tool_steps}/{agent.max_steps}，任务未完成"
+            task_state.stop_budget_exhausted(notice)
+            print(notice)
             task_state.record_attempt()
             agent.run_store.write_task_state(task_state)
             prompt_started_at = time.monotonic()
-            prompt, prompt_metadata = agent._build_prompt_and_metadata(user_message)
-            prompt += (
-                "\n\nRuntime notice: the tool budget is exhausted. Do not call another tool. "
-                "Use the evidence already present in the tool history and return exactly one "
-                "non-empty plain text answer."
-            )
-            prompt_metadata["finalization"] = True
-            agent.emit_trace(
-                task_state,
-                "prompt_built",
-                {
+            summary = ""
+            try:
+                prompt, prompt_metadata = agent._build_prompt_and_metadata(user_message)
+                prompt_metadata["finalization"] = True
+                agent.emit_trace(task_state, "prompt_built", {
                     "prompt_metadata": prompt_metadata,
                     "duration_ms": int((time.monotonic() - prompt_started_at) * 1000),
                     "purpose": "finalization",
-                },
-            )
-            raw, kind, payload = self._request_model(
-                task_state,
-                user_message,
-                prompt,
-                prompt_metadata,
-                run_started_at,
-                purpose="finalization",
-            )
-            if kind == "final":
-                final = payload.strip()
-                return self._finish_success(task_state, user_message, final, run_started_at, raw)
+                })
+                raw, kind, payload = self._request_model(
+                    task_state, user_message, prompt, prompt_metadata, run_started_at,
+                    purpose="finalization",
+                )
+                if kind == "final":
+                    summary = payload.strip()
+            except Exception as exc:
+                summary = "收尾失败：" + agent.redact_text(str(exc))
+            final = notice + ("\n\n" + summary if summary else "")
+            task_state.stop_budget_exhausted(final)
 
         # 到这里说明模型既没有在预算内给出最终答案，也没有在最终化请求里按协议收尾。
         # 仍然写 checkpoint，是为了下一次运行可以从“已探索的信息”继续，而不是从零开始。
-        if attempts >= max_attempts and tool_steps < agent.max_steps:
+        if task_state.stop_reason == "budget_exhausted":
+            pass
+        elif attempts >= max_attempts and tool_steps < agent.max_steps:
             final = "Stopped after too many malformed model responses without a valid tool call or final answer."
             task_state.stop_retry_limit(final)
         else:

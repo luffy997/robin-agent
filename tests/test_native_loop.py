@@ -42,7 +42,7 @@ def test_multiple_calls_execute_in_order_with_budget_results(tmp_path):
         replay={"reasoning_content": "hidden"},
     )
     agent = agent_at(tmp_path, [response, text_response("done")], max_steps=2)
-    assert agent.ask("create files") == "done"
+    assert agent.ask("create files") == "工具预算已耗尽：2/2，任务未完成\n\ndone"
     assert (tmp_path / "a").read_text() == "second"
     assert not (tmp_path / "b").exists()
     assert agent.current_task_state.tool_steps == 2

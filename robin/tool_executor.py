@@ -49,6 +49,15 @@ class ToolExecutor:
     def execute(self, name, args):
         """执行一次工具调用并返回结构化结果。"""
         agent = self.agent
+        state = agent.current_task_state
+        if state is not None and (state.tool_steps >= agent.max_steps or state.status != "running"):
+            return ToolExecutionResult(
+                content="Tool budget exhausted or run stopped; call not executed.",
+                metadata=_metadata("rejected", tool_error_code="budget_exhausted"),
+            )
+        if state is not None:
+            # 包含校验/审批拒绝的尝试也消耗预算，避免失败调用无限重试。
+            state.record_tool(name)
         # allowlist 是每次运行的能力上限：即使工具在全局 registry 里存在，
         # 只要本次运行没有放行，模型也不能调用。
         if agent.allowed_tools is not None and name not in agent.allowed_tools:
