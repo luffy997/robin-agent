@@ -5,7 +5,6 @@ Robin 就是包在模型外面的控制循环：负责组 prompt、解析模型�
 """
 
 import json
-import hashlib
 import os
 import re
 import uuid
@@ -27,7 +26,8 @@ from .terminal import read_approval
 from .usage import add_usage, empty_usage
 from .providers.limits import DEFAULT_CONTEXT_WINDOW, DEFAULT_MAX_NEW_TOKENS, positive_integer
 from . import tools as toolkit
-from .workspace import IGNORED_PATH_NAMES, MAX_HISTORY, WorkspaceContext, clip, now
+from .workspace import MAX_HISTORY, WorkspaceContext, clip, now
+from .snapshots import capture
 
 DEFAULT_SHELL_ENV_ALLOWLIST = ("HOME", "LANG", "LC_ALL", "LC_CTYPE", "LOGNAME", "PATH", "PWD", "SHELL", "TERM", "TMPDIR", "TMP", "TEMP", "USER")
 DEFAULT_FEATURE_FLAGS = {
@@ -393,23 +393,9 @@ class Robin:
         self.run_store.append_trace(task_state, payload)
         return payload
 
-    def capture_workspace_snapshot(self):
-        """为可写工具捕获工作区文件哈希快照。"""
-        snapshot = {}
-        for path in self.root.rglob("*"):
-            try:
-                relative_parts = path.relative_to(self.root).parts
-            except ValueError:
-                continue
-            if any(part in IGNORED_PATH_NAMES for part in relative_parts):
-                continue
-            if not path.is_file():
-                continue
-            try:
-                snapshot[path.relative_to(self.root).as_posix()] = hashlib.sha256(path.read_bytes()).hexdigest()
-            except Exception:
-                continue
-        return snapshot
+    def capture_workspace_snapshot(self, paths=None):
+        """文件工具限定目标；shell 使用有界元数据观察。"""
+        return capture(self.root, paths)
 
     @staticmethod
     def diff_workspace_snapshots(before, after):
@@ -418,6 +404,11 @@ class Robin:
         summaries = []
         all_paths = sorted(set(before) | set(after))
         for path in all_paths:
+            parent = Path(path).parent.as_posix()
+            if path not in before and not getattr(before, "complete", True) and parent not in before.covered_directories:
+                continue
+            if path not in after and not getattr(after, "complete", True) and parent not in after.covered_directories:
+                continue
             if before.get(path) == after.get(path):
                 continue
             changed_paths.append(path)

@@ -297,6 +297,25 @@ def test_repeated_identical_tool_call_is_rejected(tmp_path):
     assert result == "error: repeated tool call loop for list_files; choose a different tool or return a final answer"
 
 
+def test_file_tool_snapshot_scope_and_failure_side_effects(tmp_path):
+    agent = build_agent(tmp_path, [])
+    with patch("robin.snapshots.os.scandir", side_effect=AssertionError("must not walk")):
+        result = agent.execute_tool("write_file", {"path": "target", "content": "initial"})
+    assert result.metadata["snapshot_scope"] == "targets"
+    assert result.metadata["snapshot_complete"] is True
+    assert result.metadata["affected_paths"] == ["target"]
+
+    def fail(args):
+        (tmp_path / "target").write_text("changed")
+        raise RuntimeError("failed after write")
+
+    agent.tools["write_file"]["run"] = fail
+    result = agent.execute_tool("write_file", {"path": "target", "content": "changed"})
+    assert result.metadata["tool_status"] == "partial_success"
+    assert result.metadata["affected_paths"] == ["target"]
+    assert result.metadata["snapshot_complete"] is True
+
+
 def test_welcome_screen_keeps_box_shape_for_long_paths(tmp_path):
     deep = tmp_path / "very" / "long" / "path" / "for" / "the" / "robin" / "agent" / "welcome" / "screen"
     deep.mkdir(parents=True)

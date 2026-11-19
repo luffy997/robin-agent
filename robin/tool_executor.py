@@ -230,9 +230,10 @@ class ToolExecutor:
 
     def _execute_approved(self, name, args, tool):
         agent = self.agent
+        paths = [agent.tool_context().path(args["path"])] if name in {"write_file", "patch_file"} else None
         # 对 risky 工具做执行前后快照，是为了发现“命令失败但文件已经变了”
         # 这种 agent 特别需要知道的半成功状态。
-        before_snapshot = agent.capture_workspace_snapshot() if tool["risky"] else {}
+        before_snapshot = agent.capture_workspace_snapshot(paths) if tool["risky"] else {}
         after_snapshot = before_snapshot
         try:
             raw_content = tool["run"](args)
@@ -247,7 +248,7 @@ class ToolExecutor:
                 content = raw_content[:3000] + f"\n[full_output: {relative}] Use read_file to inspect the full output."
             else:
                 content = raw_content if name == "read_file" else clip(raw_content)
-            after_snapshot = agent.capture_workspace_snapshot() if tool["risky"] else before_snapshot
+            after_snapshot = agent.capture_workspace_snapshot(paths) if tool["risky"] else before_snapshot
             affected_paths, diff_summary = agent.diff_workspace_snapshots(before_snapshot, after_snapshot)
             workspace_changed = bool(affected_paths)
             tool_status = "ok"
@@ -274,12 +275,17 @@ class ToolExecutor:
                 workspace_fingerprint=agent.workspace.fingerprint(),
                 diff_summary=diff_summary,
             )
+            metadata.update({
+                "snapshot_scope": getattr(before_snapshot, "scope", "none"),
+                "snapshot_complete": getattr(before_snapshot, "complete", True) and getattr(after_snapshot, "complete", True),
+                "snapshot_limitations": sorted(getattr(before_snapshot, "reasons", set()) | getattr(after_snapshot, "reasons", set())),
+            })
             agent.record_process_note_for_tool(name, metadata)
             return ToolExecutionResult(content=content, metadata=metadata)
         except Exception as exc:
             # 即使工具抛异常，也要重新比对工作区。
             # 这能避免“异常返回”掩盖已经写入磁盘的副作用。
-            after_snapshot = agent.capture_workspace_snapshot() if tool["risky"] else before_snapshot
+            after_snapshot = agent.capture_workspace_snapshot(paths) if tool["risky"] else before_snapshot
             affected_paths, diff_summary = agent.diff_workspace_snapshots(before_snapshot, after_snapshot)
             workspace_changed = bool(affected_paths)
             security_event_type = "path_escape" if "path escapes workspace" in str(exc) else ""
@@ -294,5 +300,10 @@ class ToolExecutor:
                 workspace_fingerprint=agent.workspace.fingerprint(),
                 diff_summary=diff_summary,
             )
+            metadata.update({
+                "snapshot_scope": getattr(before_snapshot, "scope", "none"),
+                "snapshot_complete": getattr(before_snapshot, "complete", True) and getattr(after_snapshot, "complete", True),
+                "snapshot_limitations": sorted(getattr(before_snapshot, "reasons", set()) | getattr(after_snapshot, "reasons", set())),
+            })
             agent.record_process_note_for_tool(name, metadata)
             return ToolExecutionResult(content=f"error: tool {name} failed: {exc}", metadata=metadata)
