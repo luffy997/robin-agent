@@ -4,6 +4,7 @@ import json
 import time
 from dataclasses import asdict
 from .usage import empty_usage
+from .terminal import tool_activity
 from .providers.context import build_request
 from .providers.types import ModelError, ModelResponse, ToolResult
 
@@ -69,7 +70,8 @@ class AgentLoop:
         try:
             request = build_request(agent, prompt, prompt_metadata, finalization=purpose == "finalization")
             model_called = True
-            response = agent.model_client.complete(request)
+            with tool_activity("model", label="Waiting for model response...", keep_result=False):
+                response = agent.model_client.complete(request)
             if not isinstance(response, ModelResponse):
                 raise ModelError("Model client must return ModelResponse")
         except Exception as exc:

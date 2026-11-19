@@ -21,7 +21,7 @@ from robin.config import load_project_env, provider_env
 from robin.providers.clients import APIS, AnthropicCompatibleModelClient, OllamaModelClient, OpenAICompatibleModelClient
 from robin.runtime import Robin, SessionStore
 from robin.providers.limits import model_limits, positive_integer
-from robin.terminal import TerminalInput
+from robin.terminal import TerminalInput, show_tool_history
 from robin.usage import status_lines
 from robin.workspace import WorkspaceContext, middle
 
@@ -57,6 +57,7 @@ HELP_DETAILS = textwrap.dedent(
     /help    Show this help message.
     /memory  Show the agent's distilled working memory.
     /session Show the path to the saved session file.
+    /tools   View full tool commands and history.
     /reset   Clear the current session history and memory.
     /exit    Exit the agent.
     """
@@ -368,7 +369,10 @@ def main(argv=None):
                 return 1
         return 0
 
-    terminal = TerminalInput(status_callback=lambda: status_lines(agent.turn_usage, agent.session["usage"], agent.model_client))
+    terminal = TerminalInput(
+        status_callback=lambda: status_lines(agent.turn_usage, agent.session["usage"], agent.model_client),
+        history_callback=lambda: agent.redact_artifact(agent.session["history"]),
+    )
     while True:
         # 交互模式：每次读取一条用户输入，交给同一个 agent，
         # 因此 session history 和 working memory 会跨轮延续。
@@ -390,6 +394,9 @@ def main(argv=None):
             continue
         if user_input == "/session":
             print(agent.session_path)
+            continue
+        if user_input == "/tools":
+            show_tool_history(agent.redact_artifact(agent.session["history"]))
             continue
         if user_input == "/reset":
             agent.reset()

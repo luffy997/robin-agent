@@ -244,6 +244,25 @@ def test_patch_file_replaces_exact_match(tmp_path):
     assert file_path.read_text(encoding="utf-8") == "hello agent\n"
 
 
+def test_approval_preview_preserves_full_tool_arguments(tmp_path):
+    agent = build_agent(tmp_path, [], approval_policy="ask")
+    content = "first twenty chars!! " + "remaining file content" * 20
+    args = {"path": "preview.txt", "content": content}
+    with patch("robin.runtime.read_approval", return_value="y") as prompt:
+        result = agent.run_tool("write_file", args)
+    assert result == f"wrote preview.txt ({len(content)} chars)"
+    assert (tmp_path / "preview.txt").read_text() == content
+    assert prompt.call_args.args == ("write_file", args)
+
+
+def test_shell_approval_only_accepts_explicit_confirmation(tmp_path):
+    agent = build_agent(tmp_path, [], approval_policy="ask")
+    with patch("robin.runtime.read_approval", return_value="e"):
+        assert agent.approve("run_shell", {"command": "x" * 40}) is False
+    with patch("robin.runtime.read_approval", side_effect=EOFError):
+        assert agent.approve("run_shell", {"command": "x" * 40}) is False
+
+
 def test_invalid_risky_tool_does_not_prompt_for_approval(tmp_path):
     agent = build_agent(tmp_path, [], approval_policy="ask")
 

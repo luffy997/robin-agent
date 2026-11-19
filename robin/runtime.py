@@ -23,6 +23,7 @@ from .security import REDACTED_VALUE
 from .session_store import SessionStore
 from .tool_context import ToolContext
 from .tool_executor import ToolExecutor
+from .terminal import read_approval
 from .usage import add_usage, empty_usage
 from .providers.limits import DEFAULT_CONTEXT_WINDOW, DEFAULT_MAX_NEW_TOKENS, positive_integer
 from . import tools as toolkit
@@ -718,7 +719,7 @@ class Robin:
         if self.approval_policy == "never":
             return False
         try:
-            answer = input(f"approve {name} {json.dumps(args, ensure_ascii=True)}? [y/N] ")
+            answer = read_approval(name, args)
         except EOFError:
             return False
         return answer.strip().lower() in {"y", "yes"}
