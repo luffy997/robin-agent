@@ -38,7 +38,37 @@ Robin uses LiteLLM directly as a Python library (no Proxy). The agent loop sends
 structured messages and JSON Schema tools through `ModelClient`; it receives a
 `ModelResponse` with text, reasoning, native tool calls, stop reason and usage.
 Only native calls execute tools. XML or DSML in an answer stays ordinary text.
+Loop protection applies even with automatic approval: the third identical call
+or the fourth call in an A/B/A/B sequence is rejected within each user turn.
+Tool attempts (including validation and approval rejections) consume the step
+budget. Once exhausted, no further tools execute; one tool-free summary request
+may follow. The terminal reports the used/total budget and the persisted run
+remains `stopped` with reason `budget_exhausted`, even if summarization fails.
 Multiple calls run sequentially, each with its own validation and approval.
+File reads return complete lines with an explicit continuation cursor; context
+reduction recalculates that cursor when fewer lines fit. Repeated reads of an
+unchanged range are rejected after two successful returns within the current
+turn, including reads separated by other calls. New ranges and changed content
+remain readable. This additional range tracking starts fresh after resume.
+Read ranges are merged when finding unread content. The latest fully read file
+up to 12 KiB is retained in model requests while unchanged within the turn;
+further reads of that retained version are rejected. Changes invalidate the
+retained content. Larger files continue to use paginated reads.
+Large shell results are saved as redacted files under `.robin/tool-output/`;
+the preview includes the full-output path for paginated reading. These files
+currently require manual cleanup.
+Approval previews show the first 20 characters of long text arguments followed
+by `...`; execution uses the full arguments. Shortened shell approvals show a
+`[+]` marker: click it to expand the full command, then click `[-]` to collapse.
+Only `y`/`yes` approves execution. Non-interactive approvals show full arguments.
+Interactive terminals display a
+spinner with an argument preview while a tool runs, followed by a persistent
+completion line with the same preview, including in auto approval mode. Click
+`工具记录` in the input toolbar or enter `/tools` to browse full tool arguments
+from the current session, including completed calls and resumed history.
+The scrollable viewer closes with Esc or q; opening it never reruns a command.
+A separate
+spinner indicates waiting for the model response.
 
 Select the wire protocol with `--api` or `ROBIN_API`. Priority is CLI, environment,
 then provider default. Custom URLs never select a protocol by hostname.
