@@ -43,6 +43,34 @@ def test_robin_ask_delegates_to_agent_loop(tmp_path):
     assert agent.ask("Use facade") == "Facade works."
 
 
+@pytest.mark.parametrize("commands,executed", [(["A", "A", "A"], 2), (["A", "B", "A", "B"], 3)])
+def test_auto_blocks_repeated_calls_before_approval(tmp_path, commands, executed):
+    from unittest.mock import Mock
+
+    agent = build_agent(tmp_path, [
+        *(tool_response("run_shell", {"command": command}) for command in commands),
+        text_response("stopped repeating"),
+    ], max_steps=8)
+    runner = Mock(return_value="exit_code: 0\nstdout: ok")
+    agent.tools["run_shell"]["run"] = runner
+    agent.approve = Mock(return_value=True)
+    agent.ask("inspect")
+    assert runner.call_count == executed
+    assert agent.approve.call_count == executed
+    assert "repeated tool call loop" in agent.session["history"][-2]["content"]
+    assert agent.current_task_state.tool_steps == len(commands)
+
+
+def test_repetition_does_not_leak_across_user_requests(tmp_path):
+    agent = build_agent(tmp_path, [
+        tool_response("list_files", {}), tool_response("list_files", {}), text_response("first"),
+        tool_response("list_files", {}), text_response("second"),
+    ])
+    agent.ask("first")
+    agent.ask("second")
+    assert "repeated" not in agent.session["history"][-2]["content"]
+
+
 @pytest.mark.parametrize("summary", [
     text_response("summary"), text_response(""),
     tool_response("write_file", {"path": "forbidden", "content": "bad"}),

@@ -592,12 +592,22 @@ class Robin:
     def repeated_tool_call(self, name, args):
         # agent 很常见的一种坏循环，是在没有新信息的情况下反复发起同一调用。
         # 这里提前挡掉最简单的这种循环。
-        """检测最近是否重复调用了同一个工具和参数。"""
-        tool_events = [item for item in self.session["history"] if item["role"] == "tool"]
+        """在当前用户轮次检测第三次相同调用及 A/B/A/B 循环。"""
+        history = self.session["history"]
+        start = next((i + 1 for i in range(len(history) - 1, -1, -1)
+                      if history[i]["role"] == "user"), 0)
+        tool_events = [item for item in history[start:] if item["role"] == "tool"]
         if len(tool_events) < 2:
             return False
         recent = tool_events[-2:]
-        return all(item["name"] == name and item["args"] == args for item in recent)
+        if all(item["name"] == name and item["args"] == args for item in recent):
+            return True
+        # 在第四次调用 B 前拦截 A/B/A/B；参数按结构比较，不解析 shell 语义。
+        if len(tool_events) >= 3:
+            a, b, c = tool_events[-3:]
+            return (a["name"], a["args"]) == (c["name"], c["args"]) and (
+                b["name"], b["args"]) == (name, args)
+        return False
 
     @staticmethod
     def new_task_id():

@@ -104,7 +104,7 @@ class ToolExecutor:
 
         if agent.repeated_tool_call(name, args):
             return ToolExecutionResult(
-                content=f"error: repeated identical tool call for {name}; choose a different tool or return a final answer",
+                content=f"error: repeated tool call loop for {name}; choose a different tool or return a final answer",
                 metadata=_metadata(
                     "rejected",
                     tool_error_code="repeated_identical_call",
