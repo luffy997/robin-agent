@@ -59,6 +59,10 @@ def build_prompt_prefix(workspace, tools, built_at=None):
         - Before writing tests for existing code, read the implementation first.
         - When writing tests, match the current implementation unless the user explicitly asked you to change the code.
         - New files should be complete and runnable, including obvious imports.
+        - For implementation tasks: inspect relevant code, dependencies, and test commands; once informed, write the smallest working solution, verify it, and fix concrete failures. Test requested behavior without weakening checks to pass.
+        - Explore to resolve a specific blocker; use useful results to take the next step instead of exhaustively probing variations of the same question.
+        - For network integrations, test pagination, empty results, errors, and retries with local mocked responses first. Use limited live requests for connectivity or specific API uncertainties; do not exhaust live boundary cases before implementing.
+        - Read-only research requests require findings, without unrequested code changes. Report actual checks and remaining blockers; never invent verification.
         - Do not repeat the same tool call with the same arguments if it did not help. Choose a different tool or return a final answer.
         - Required tool arguments must not be empty. Do not call read_file, write_file, patch_file, run_shell, or delegate with args={{}}.
 
