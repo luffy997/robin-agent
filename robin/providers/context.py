@@ -5,6 +5,7 @@ import json
 
 from .types import ModelRequest
 from .limits import output_budget
+from ..tool_output import bound_result
 
 
 def tool_definitions(tools):
@@ -78,15 +79,17 @@ def build_request(agent, prompt, metadata, finalization=False):
         result_budget = max(80, budget // max(1, len(group) - 1) - 200)
         for message in group[1:]:
             if len(message["content"]) > result_budget:
-                message["content"] = (
-                    message["content"][:result_budget] + "\n[tool result truncated]"
-                )
+                message["content"] = bound_result(message["content"], result_budget)
         cost = len(json.dumps(group, ensure_ascii=False))
         if size + cost > budget and selected:
             break
         selected.insert(0, group)
         size += cost
     messages = [{"role": "system", "content": system}]
+    executor = getattr(agent, "tool_executor", None)
+    retained = executor.read_context() if executor is not None else ""
+    if retained:
+        messages[0]["content"] += "\n\n" + agent.redact_text(retained)
     # Keep the current user objective even when a large tool group fills the history budget.
     current_user = next((g for g in reversed(valid) if g[0]["role"] == "user"), None)
     if current_user and current_user not in selected:

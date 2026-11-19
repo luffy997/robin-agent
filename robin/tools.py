@@ -11,6 +11,7 @@ import textwrap
 from functools import partial
 
 from .workspace import IGNORED_PATH_NAMES
+from .tool_output import read_page
 
 BASE_TOOL_SPECS = {
     "list_files": {
@@ -21,7 +22,7 @@ BASE_TOOL_SPECS = {
     "read_file": {
         "schema": {"path": "str", "start": "int=1", "end": "int=200"},
         "risky": False,
-        "description": "Read a UTF-8 file by line range.",
+        "description": "Read a UTF-8 file by line range. Results report the actual range and next start; follow that cursor when more content remains.",
     },
     "search": {
         "schema": {"pattern": "str", "path": "str='.'"},
@@ -183,8 +184,7 @@ def tool_read_file(context, args):
     if start < 1 or end < start:
         raise ValueError("invalid line range")
     lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
-    body = "\n".join(f"{number:>4}: {line}" for number, line in enumerate(lines[start - 1:end], start=start))
-    return f"# {path.relative_to(context.root)}\n{body}"
+    return read_page(path.relative_to(context.root), lines, start, end)
 
 
 def tool_search(context, args):
