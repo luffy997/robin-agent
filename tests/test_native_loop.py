@@ -219,8 +219,8 @@ def test_history_trimming_never_splits_call_group(tmp_path):
     )
     ids = {c["id"] for m in req.messages for c in m.get("tool_calls", [])}
     result_ids = {m["tool_call_id"] for m in req.messages if m["role"] == "tool"}
-    assert ids == result_ids == {"new"}
-    assert req.messages[1] == {"role": "user", "content": "new"}
+    assert ids == result_ids == {"old", "new"}
+    assert {"role": "user", "content": "new"} in req.messages
     # An interrupted group is omitted, never sent as a dangling native call.
     agent.session["history"].pop()
     req = build_request(agent, "system", {})

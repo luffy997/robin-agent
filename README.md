@@ -127,9 +127,18 @@ local fallback budgets, not discovered model capabilities. For example:
 
 Use limits supported by your gateway. Each request caps output against remaining
 context after a conservative local estimate of messages/tools and a 4,096-token
-safety margin. The estimate uses UTF-8 byte length plus message overhead; it may
+safety margin. The estimate uses roughly three ASCII characters per token, two
+tokens per non-ASCII character, plus message overhead; it may
 reduce output earlier than necessary and is never displayed as actual usage.
 If no room remains, Robin fails before sending the request.
+Native history uses the model context budget rather than a fixed character cap.
+Near capacity, Robin generates a progress checkpoint and keeps recent complete
+tool exchanges (up to roughly 20,000 estimated tokens, scaled for small windows).
+The checkpoint records completed work, failed changes, pending steps and test
+evidence; original session history remains available for audit. Checkpoints survive
+resume and are cleared by `/reset`. Compaction calls count toward reported usage.
+Failed compaction preserves the original history and stops with an error. After
+compaction, old read-range guards are cleared so discarded code can be read again.
 On truncation, no tools from that response execute;
 restart with a larger limit and `--resume latest`, then ask Robin to continue.
 The gateway or model may enforce a separate output limit.

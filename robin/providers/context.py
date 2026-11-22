@@ -1,11 +1,10 @@
 """构建原生工具消息，裁剪时保留完整调用和结果组。"""
 
 import ast
-import json
 
 from .types import ModelRequest
 from .limits import output_budget
-from ..tool_output import bound_result
+from ..history_compaction import checkpoint_messages, compact_history
 
 
 def tool_definitions(tools):
@@ -47,54 +46,48 @@ def build_request(agent, prompt, metadata, finalization=False):
     if legacy:
         system += "\n\n" + legacy
     groups = []
-    for item in agent.session["history"]:
+    through = agent.session.get("history_compaction", {}).get("through", -1)
+    for index, item in enumerate(agent.session["history"]):
+        if index <= through:
+            continue
         role = item["role"]
         if role == "tool":
             if groups and item.get("tool_call_id"):
-                groups[-1].append(
+                groups[-1][1].append(
                     {
                         "role": "tool",
                         "tool_call_id": item["tool_call_id"],
                         "content": item["content"],
                     }
                 )
+                groups[-1][0] = index
             continue
         message = {"role": role, "content": item.get("content", "")}
         if item.get("tool_calls"):
             message["tool_calls"] = item["tool_calls"]
         message.update(item.get("replay", {}))
-        groups.append([message])
+        groups.append([index, [message]])
     # 中断时可能尚未写入所有结果，不把孤立调用送入后端。
     valid = []
-    for group in groups:
+    for end, group in groups:
         calls = group[0].get("tool_calls", [])
         if calls and {c["id"] for c in calls} != {m["tool_call_id"] for m in group[1:]}:
             continue
-        valid.append(group)
-    budget = metadata.get("section_budgets", {}).get("history", 5200)
-    selected, size = [], 0
-    for group in reversed(valid):
-        group = [dict(message) for message in group]
-        # Bound large results without changing call IDs, arguments or replay signatures.
-        result_budget = max(80, budget // max(1, len(group) - 1) - 200)
-        for message in group[1:]:
-            if len(message["content"]) > result_budget:
-                message["content"] = bound_result(message["content"], result_budget)
-        cost = len(json.dumps(group, ensure_ascii=False))
-        if size + cost > budget and selected:
-            break
-        selected.insert(0, group)
-        size += cost
-    messages = [{"role": "system", "content": system}]
+        valid.append((end, group))
+    definitions = [] if finalization else tool_definitions(agent.tools)
     executor = getattr(agent, "tool_executor", None)
     retained = executor.read_context() if executor is not None else ""
+    selected = compact_history(agent, system, valid, definitions, metadata, agent.redact_text(retained))
+    messages = [{"role": "system", "content": system}, *checkpoint_messages(agent)]
+    if metadata["history_compacted"]:
+        retained = ""
     if retained:
-        messages[0]["content"] += "\n\n" + agent.redact_text(retained)
-    # Keep the current user objective even when a large tool group fills the history budget.
-    current_user = next((g for g in reversed(valid) if g[0]["role"] == "user"), None)
+        messages.append({"role": "user", "content": agent.redact_text(retained)})
+    current_user = next(({"role": "user", "content": item["content"]}
+                         for item in reversed(agent.session["history"]) if item["role"] == "user"), None)
     if current_user and current_user not in selected:
         selected.insert(0, current_user)
-    messages.extend(message for group in selected for message in group)
+    messages.extend(selected)
     if finalization:
         messages.append(
             {
@@ -102,7 +95,6 @@ def build_request(agent, prompt, metadata, finalization=False):
                 "content": "Tool budget exhausted. Summarize the available evidence without calling tools.",
             }
         )
-    definitions = [] if finalization else tool_definitions(agent.tools)
     limit, estimated_input = output_budget(messages, definitions, agent.max_new_tokens, agent.context_window)
     metadata.update({"requested_output_tokens": agent.max_new_tokens,
                      "effective_output_tokens": limit, "estimated_input_tokens": estimated_input,

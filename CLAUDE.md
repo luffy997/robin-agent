@@ -101,6 +101,15 @@ Agent Loop 不解析 XML/DSML；普通回答中的这些标签保持文本。多
 - feature flags：`memory`、`relevant_memory`、`context_reduction`、`prompt_cache`，默认全开
   （`runtime.DEFAULT_FEATURE_FLAGS`），评测会用 `_temporary_feature_flags` 做消融。
 
+原生模型消息不使用上述 history 字符预算裁剪：容量充足时保留压缩边界之后的全部有效历史。
+`history_compaction.py` 按模型窗口预留输出、4096 token 安全余量及摘要空间，接近上限时
+请求不带工具的进度摘要，保留近期约 20000 token（小窗口按可用预算缩小）的完整调用结果组。
+摘要包含已完成、失败修改、未完成步骤及验证证据；成功且容量检查通过后才保存
+session.history_compaction（summary/through/created_at），原始 history 不删除。
+摘要失败或单个近期消息组过大时明确停止，不静默丢弃；摘要调用计入本轮、会话及 delegate 用量。
+resume 复用压缩边界，reset 清除；压缩后清空旧读取范围保护，允许获取已退出上下文的正文。
+本地 token 估算采用 ASCII 三字符约一个 token、非 ASCII 每字符两个及消息开销，不代表接口实际用量。
+
 ### 记忆分层
 
 - working：当前任务摘要 + 最近文件；episodic notes ≤ 12；file summaries ≤ 6。
@@ -140,7 +149,7 @@ shell 大输出保存至工作区 `.robin/tool-output/` 的随机脱敏文件，
 同一用户轮次、文件内容版本下，已完整返回两次的范围再次读取会拒绝，跨间隔有效；新范围及内容变化允许读取。
 已读区间会合并计算首个未读位置，不推荐超出 EOF 的续读。最近一个完整读完且不超过 12 KiB 的文件，
 以数据块保留在实际模型请求中；该版本的全文已被保留时拒绝继续重读。每次请求校验路径及内容哈希，
-变化、用户轮次切换或 reset 后淘汰。缓存校验只读取普通文件，使用非阻塞且不跟随符号链接的打开方式，
+变化、用户轮次切换、历史压缩或 reset 后淘汰。缓存校验只读取普通文件，使用非阻塞且不跟随符号链接的打开方式，
 打开后再次检查文件类型与大小，最多读取 12001 字节；特殊文件、超限或读取失败均淘汰缓存。
 额外保留内容由输出 token 预算计算纳入估算，不受原 12000 字符 section 总预算限制。
 此范围记录只保存在当前进程，resume 后重新积累；不识别 shell 与 read 的语义等价。

@@ -73,7 +73,7 @@ def test_merged_full_read_is_retained_until_file_changes(tmp_path):
     assert "already fully read" in result.content
     assert "start=5" not in result.content
     request = build_request(agent, "task", {"section_budgets": {"history": 80}})
-    assert "first\nsecond\nthird\nfourth" in request.messages[0]["content"]
+    assert any("first\nsecond\nthird\nfourth" in m["content"] for m in request.messages)
     path.write_text("changed\n")
     assert "first\nsecond" not in agent.tool_executor.read_context()
     assert "changed" in agent.execute_tool("read_file", {"path": "sample"}).content

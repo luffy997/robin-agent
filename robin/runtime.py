@@ -733,6 +733,7 @@ class Robin:
         self.turn_usage = empty_usage()
         self.session["history"] = []
         self.session.pop("legacy_summary", None)
+        self.session.pop("history_compaction", None)
         self.session["memory"].clear()
         self.session["memory"].update(memorylib.default_memory_state())
         self.memory = memorylib.LayeredMemory(self.session["memory"], workspace_root=self.root)
