@@ -54,5 +54,6 @@ readme_intro_locked/
 # Packaging metadata
 robin.egg-info/
 benchmarks
-docs
+/docs/*
+!/docs/agent-architecture.md
 scripts
