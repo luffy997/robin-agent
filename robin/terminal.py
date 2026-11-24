@@ -259,6 +259,8 @@ def render_toolbar(status_callback=None, width=None):
     lines = list(status_callback()) if status_callback else []
     if width < 90:
         lines = [line.replace("本轮 Token 输入", "入").replace(" / 输出", " 出")
+                 .replace("最近请求上下文（估算）", "上下文估算").replace(" token", "")
+                 .replace("最近请求上下文（接口）", "上下文接口")
                  .replace("会话累计", "累计").replace("缓存读取", "缓存")
                  .replace(" / 命中率", " 命中").replace(" / 等级", " 等级") for line in lines]
     lines.append("/ commands | Up/Down select | Tab complete | Enter send | Ctrl-D exit")

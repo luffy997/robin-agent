@@ -42,14 +42,27 @@ def reasoning_status(client):
     return state, str(level)
 
 
-def status_lines(turn, session, client):
+def status_lines(turn, session, client, context_usage=None, context_window=None):
     state, level = reasoning_status(client)
     rate = "未知"
     if turn["cache_calls"] and turn["cache_input"]:
         rate = f'{100 * turn["cache_read"] / turn["cache_input"]:.1f}%'
         if turn["cache_calls"] < turn["calls"]:
             rate += "(不完整)"
-    return [
+    lines = [
         f'本轮 Token 输入 {count_text(turn, "input_tokens")} / 输出 {count_text(turn, "output_tokens")} | 会话累计 {count_text(session, "input_tokens", "output_tokens")}',
         f'缓存读取 {count_text(turn, "cached_tokens")} / 命中率 {rate} | 推理 {state} / 等级 {level}',
     ]
+    if context_window:
+        context = context_usage or {}
+        used = context.get("input_tokens")
+        reported = used is not None
+        if not reported:
+            used = context.get("estimated_input_tokens")
+        prefix = "" if reported else "约 "
+        value = "未知" if used is None else f"{prefix}{used:,} / {context_window:,} token ({100 * used / context_window:.1f}%)"
+        if used is None:
+            value += f" / {context_window:,} token"
+        source = "接口" if reported else "估算"
+        lines.append(f"最近请求上下文（{source}） " + value)
+    return lines

@@ -100,6 +100,7 @@ def build_request(agent, prompt, metadata, finalization=False, force_compaction=
     metadata.update({"requested_output_tokens": agent.max_new_tokens,
                      "effective_output_tokens": limit, "estimated_input_tokens": estimated_input,
                      "context_window": agent.context_window})
+    agent.context_usage = {"estimated_input_tokens": estimated_input}
     return ModelRequest(
         messages,
         definitions,

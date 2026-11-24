@@ -29,6 +29,11 @@ reasoning mode. It refreshes when input resumes. Missing provider counters are
 shown as unknown; incomplete totals are marked. Session totals survive resume
 and are cleared by `/reset`. Old sessions cannot recover historical usage.
 These counters describe reported API usage, not price or context occupancy.
+The toolbar also shows the latest request's input context, configured context
+capacity, and percentage, separately from cumulative API usage. It prefers
+API-reported input tokens and labels local estimates when awaiting a response or
+when usage is unavailable. Before the first request or after `/reset`, context
+usage is shown as unknown.
 The existing CLI supports DeepSeek, OpenAI-compatible, Anthropic-compatible,
 and Ollama providers. API keys are supplied by the user.
 

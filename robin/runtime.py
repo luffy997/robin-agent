@@ -125,6 +125,7 @@ class Robin:
         self.current_run_dir = None
         self.last_prompt_metadata = {}
         self.last_completion_metadata = {}
+        self.context_usage = {}
         self.last_durable_promotions = []
         self.last_durable_rejections = []
         self.last_durable_superseded = []
@@ -731,6 +732,7 @@ class Robin:
         self.tool_executor._read_context.clear()
         self.session["usage"] = empty_usage()
         self.turn_usage = empty_usage()
+        self.context_usage = {}
         self.session["history"] = []
         self.session.pop("legacy_summary", None)
         self.session.pop("history_compaction", None)

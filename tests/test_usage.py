@@ -45,6 +45,33 @@ def test_unknown_partial_and_toolbar_width():
         assert all(get_cwidth(line) <= width for line in render_toolbar(lambda: status_lines(usage, usage, Client([])), width).splitlines())
 
 
+def test_context_status_prefers_reported_input_and_reset(tmp_path):
+    agent = agent_at(tmp_path, [text_response("ok")])
+    def lines():
+        return status_lines(agent.turn_usage, agent.session["usage"], agent.model_client,
+                            agent.context_usage, agent.context_window)
+    assert "未知 / 128,000 token" in lines()[-1]
+    agent.ask("hello")
+    used = agent.context_usage["estimated_input_tokens"]
+    assert used == agent.last_prompt_metadata["estimated_input_tokens"]
+    assert "上下文（接口） 100 / 128,000 token" in lines()[-1]
+    assert f"{100 * 100 / 128000:.1f}%" in lines()[-1]
+    from prompt_toolkit.utils import get_cwidth
+    for width in (20, 60, 120):
+        assert all(get_cwidth(line) <= width for line in render_toolbar(lines, width).splitlines())
+    agent.reset()
+    assert "未知" in lines()[-1]
+
+
+def test_context_zero_and_missing_reported_usage():
+    usage = empty_usage()
+    def line(context):
+        return status_lines(usage, usage, Client([]), context, 1000)[-1]
+    assert "（接口） 0 / 1,000 token (0.0%)" in line({"input_tokens": 0, "estimated_input_tokens": 300})
+    assert "（估算） 约 300" in line({"input_tokens": None, "estimated_input_tokens": 300})
+    assert "未知" in line({})
+
+
 def test_loop_delegate_resume_and_reset(tmp_path):
     agent = agent_at(tmp_path, [
         tool_response('delegate', {'task': 'inspect', 'max_steps': 2}),
@@ -71,6 +98,7 @@ def test_retry_and_failed_request_usage(tmp_path):
         agent.ask("again")
     assert agent.turn_usage["calls"] == 1
     assert agent.session["usage"]["calls"] == 3
+    assert agent.context_usage["input_tokens"] == 100
 
 
 def test_old_session_and_reasoning(tmp_path):
@@ -97,3 +125,6 @@ def test_missing_usage_does_not_reuse_previous_counts(tmp_path):
     agent.ask("second")
     assert count_text(agent.turn_usage, "input_tokens") == "未知"
     assert count_text(agent.session["usage"], "input_tokens") == "100(不完整)"
+    assert agent.context_usage.get("input_tokens") is None
+    assert "（估算）" in status_lines(agent.turn_usage, agent.session["usage"], agent.model_client,
+                                    agent.context_usage, agent.context_window)[-1]

@@ -81,6 +81,7 @@ class AgentLoop:
             completion_metadata = failure.usage_metadata() if failure else {}
             if model_called:
                 agent.record_usage(completion_metadata)
+                agent.context_usage["input_tokens"] = completion_metadata.get("input_tokens")
             prompt_metadata.update(completion_metadata)
             agent.last_completion_metadata = completion_metadata
             agent.last_prompt_metadata = prompt_metadata
@@ -88,6 +89,7 @@ class AgentLoop:
                 self._persist_model_failure(task_state, user_message, exc, run_started_at, prompt_metadata)
             raise RuntimeError(agent.redact_text(str(exc))) from exc
         completion_metadata = response.usage_metadata()
+        agent.context_usage["input_tokens"] = completion_metadata.get("input_tokens")
         for usage in response.prior_usages:
             agent.record_usage(asdict(usage))
         agent.record_usage(completion_metadata)

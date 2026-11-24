@@ -372,7 +372,8 @@ def main(argv=None):
         return 0
 
     terminal = TerminalInput(
-        status_callback=lambda: status_lines(agent.turn_usage, agent.session["usage"], agent.model_client),
+        status_callback=lambda: status_lines(agent.turn_usage, agent.session["usage"], agent.model_client,
+                                             agent.context_usage, agent.context_window),
         history_callback=lambda: agent.redact_artifact(agent.session["history"]),
     )
     while True:
