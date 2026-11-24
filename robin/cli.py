@@ -8,8 +8,10 @@
 import argparse
 import os
 import shutil
+import shlex
 import sys
 import textwrap
+from pathlib import Path
 
 # 支持直接运行 `python robin/cli.py`（或 IDE 里右键 Run）：直接运行脚本时
 # `__package__` 为空，Python 只会把脚本所在目录加进 sys.path，找不到 robin 包。
@@ -371,6 +373,19 @@ def main(argv=None):
                 return 1
         return 0
 
+    try:
+        return _interactive(agent)
+    except KeyboardInterrupt:
+        print()
+        return 0
+    finally:
+        project = Path(__file__).resolve().parent.parent
+        launcher = ["uv", "run", "--project", str(project), "robin"] if (project / "pyproject.toml").is_file() else ["robin"]
+        command = shlex.join([*launcher, "--cwd", str(agent.root), "--resume", agent.session["id"]])
+        print(f"\n恢复此会话：\n  {command}")
+
+
+def _interactive(agent):
     terminal = TerminalInput(
         status_callback=lambda: status_lines(agent.turn_usage, agent.session["usage"], agent.model_client,
                                              agent.context_usage, agent.context_window),
