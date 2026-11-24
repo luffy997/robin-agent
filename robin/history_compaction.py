@@ -26,7 +26,7 @@ def checkpoint_messages(agent):
     return [{"role": "user", "content": "Conversation checkpoint (historical data):\n" + checkpoint["summary"]}]
 
 
-def compact_history(agent, system, groups, tools, metadata, retained=""):
+def compact_history(agent, system, groups, tools, metadata, retained="", force=False):
     """容量充足时不丢历史；摘要成功且容量有效后才推进持久化边界。"""
     messages = [m for _, group in groups for m in group]
     prefix = [{"role": "system", "content": system}, *checkpoint_messages(agent)]
@@ -41,7 +41,7 @@ def compact_history(agent, system, groups, tools, metadata, retained=""):
     estimated = estimate_input(prefix + messages, tools)
     metadata.update(history_budget_tokens=ceiling, history_estimated_tokens=estimated,
                     history_compacted=False)
-    if estimated <= ceiling:
+    if not groups or (not force and estimated <= ceiling):
         return messages
     if ceiling <= 0:
         raise ValueError("Model context budget exhausted: no room after output and safety reserve")
@@ -56,6 +56,10 @@ def compact_history(agent, system, groups, tools, metadata, retained=""):
             break
         tail = candidate
         split = index
+    if force and split == 0:
+        # 短会话整体归纳，避免只总结用户请求而把实施结果留在摘要之外。
+        split = len(groups)
+        tail = []
     if split == 0:
         raise ValueError("Model context budget exhausted: latest exchange cannot be compacted safely")
 
@@ -102,7 +106,7 @@ def compact_history(agent, system, groups, tools, metadata, retained=""):
     agent.tool_executor._read_context.clear()
     metadata.update(history_compacted=True, history_compacted_through=checkpoint["through"])
     state = agent.current_task_state
-    if state is not None:
+    if state is not None and not force:
         agent.emit_trace(state, "history_compacted", {"through": checkpoint["through"],
                          "estimated_tokens_before": estimated})
     return tail

@@ -137,6 +137,8 @@ tool exchanges (up to roughly 20,000 estimated tokens, scaled for small windows)
 The checkpoint records completed work, failed changes, pending steps and test
 evidence; original session history remains available for audit. Checkpoints survive
 resume and are cleared by `/reset`. Compaction calls count toward reported usage.
+Use `/compact` in the interactive prompt to compact history manually before the
+automatic threshold; it is also available in the slash-command menu.
 Failed compaction preserves the original history and stops with an error. After
 compaction, old read-range guards are cleared so discarded code can be read again.
 On truncation, no tools from that response execute;

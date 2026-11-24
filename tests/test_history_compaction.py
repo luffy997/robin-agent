@@ -102,3 +102,22 @@ def test_latest_exchange_too_large_does_not_drop_or_call_model(tmp_path):
         build_request(agent, "system", {})
     assert len(agent.session["history"][0]["content"]) == 40000
     assert agent.model_client.requests == []
+
+
+def test_manual_compaction_forces_short_history_and_skips_empty(tmp_path):
+    agent = agent_at(tmp_path, [text_response("Goal: hello; Done: greeted")])
+    metadata = {}
+    build_request(agent, "system", metadata, force_compaction=True)
+    assert not metadata["history_compacted"]
+    assert not agent.model_client.requests
+    agent.session["history"] = [{"role": "user", "content": "hello"},
+                                {"role": "assistant", "content": "hi"}]
+    original = list(agent.session["history"])
+    build_request(agent, "system", metadata, force_compaction=True)
+    assert metadata["history_compacted"]
+    assert len(agent.model_client.requests) == 1
+    assert agent.session["history"] == original
+    assert agent.session_store.load(agent.session["id"])["history_compaction"]["summary"]
+    build_request(agent, "system", metadata, force_compaction=True)
+    assert not metadata["history_compacted"]
+    assert len(agent.model_client.requests) == 1

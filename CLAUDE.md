@@ -108,6 +108,7 @@ Agent Loop 不解析 XML/DSML；普通回答中的这些标签保持文本。多
 session.history_compaction（summary/through/created_at），原始 history 不删除。
 摘要失败或单个近期消息组过大时明确停止，不静默丢弃；摘要调用计入本轮、会话及 delegate 用量。
 resume 复用压缩边界，reset 清除；压缩后清空旧读取范围保护，允许获取已退出上下文的正文。
+交互命令 `/compact` 可在阈值前手动压缩；无新历史时不调用模型，短会话整体归纳。
 本地 token 估算采用 ASCII 三字符约一个 token、非 ASCII 每字符两个及消息开销，不代表接口实际用量。
 
 ### 记忆分层

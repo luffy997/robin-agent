@@ -201,7 +201,7 @@ def test_toolbar_reads_current_status():
 def test_slash_menu_filters_commands():
     completer = SlashCompleter()
     assert [c.text for c in completer.get_completions(Document("/"), None)] == [
-        "/help", "/memory", "/session", "/tools", "/reset", "/exit", "/quit",
+        "/help", "/memory", "/session", "/tools", "/reset", "/compact", "/exit", "/quit",
     ]
     assert [c.text for c in completer.get_completions(Document("/se"), None)] == ["/session"]
     assert list(completer.get_completions(Document("explain /help"), None)) == []

@@ -35,7 +35,7 @@ def tool_definitions(tools):
     return definitions
 
 
-def build_request(agent, prompt, metadata, finalization=False):
+def build_request(agent, prompt, metadata, finalization=False, force_compaction=False):
     # 上下文管理器继续控制记忆及系统上下文；历史只通过结构化消息发送。
     system = getattr(agent.context_manager, "model_system_text", None)
     if system is None:
@@ -77,7 +77,8 @@ def build_request(agent, prompt, metadata, finalization=False):
     definitions = [] if finalization else tool_definitions(agent.tools)
     executor = getattr(agent, "tool_executor", None)
     retained = executor.read_context() if executor is not None else ""
-    selected = compact_history(agent, system, valid, definitions, metadata, agent.redact_text(retained))
+    selected = compact_history(agent, system, valid, definitions, metadata, agent.redact_text(retained),
+                               force=force_compaction)
     messages = [{"role": "system", "content": system}, *checkpoint_messages(agent)]
     if metadata["history_compacted"]:
         retained = ""

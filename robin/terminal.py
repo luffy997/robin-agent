@@ -27,6 +27,7 @@ COMMANDS = {
     "/session": "Show saved session path",
     "/tools": "View full tool commands and history",
     "/reset": "Clear session history and memory",
+    "/compact": "Compact conversation history into a checkpoint",
     "/exit": "Exit Robin",
     "/quit": "Exit Robin",
 }

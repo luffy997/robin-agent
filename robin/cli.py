@@ -21,6 +21,7 @@ from robin.config import load_project_env, provider_env
 from robin.providers.clients import APIS, AnthropicCompatibleModelClient, OllamaModelClient, OpenAICompatibleModelClient
 from robin.runtime import Robin, SessionStore
 from robin.providers.limits import model_limits, positive_integer
+from robin.providers.context import build_request
 from robin.terminal import TerminalInput, show_tool_history
 from robin.usage import status_lines
 from robin.workspace import WorkspaceContext, middle
@@ -58,6 +59,7 @@ HELP_DETAILS = textwrap.dedent(
     /memory  Show the agent's distilled working memory.
     /session Show the path to the saved session file.
     /tools   View full tool commands and history.
+    /compact Compact conversation history into a progress checkpoint.
     /reset   Clear the current session history and memory.
     /exit    Exit the agent.
     """
@@ -401,6 +403,14 @@ def main(argv=None):
         if user_input == "/reset":
             agent.reset()
             print("session reset")
+            continue
+        if user_input == "/compact":
+            try:
+                prompt, metadata = agent._build_prompt_and_metadata("")
+                build_request(agent, prompt, metadata, force_compaction=True)
+                print("历史已压缩，原始记录已保留。" if metadata["history_compacted"] else "暂无可压缩的新历史。")
+            except (RuntimeError, ValueError) as exc:
+                print(agent.redact_text(str(exc)), file=sys.stderr)
             continue
 
         if user_input.startswith("/"):
