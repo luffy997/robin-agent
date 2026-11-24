@@ -147,3 +147,7 @@ uv build
 `uv build` 生成 wheel 和源码包，运行仍需 Python；当前没有独立 Linux 可执行文件。终端交互已经实现，模型输出目前为同步非流式。
 
 阅读源码可从 `Robin.ask()` → `AgentLoop.run()` → 模型适配与工具执行开始。完整分层图、调用链及限制见[架构详解](docs/agent-architecture.md)。
+
+## 许可证
+
+本项目采用 [MIT 许可证](LICENSE)。第三方依赖遵循各自的许可证。
