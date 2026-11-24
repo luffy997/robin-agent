@@ -6,6 +6,7 @@ import json
 import threading
 import asyncio
 from contextlib import contextmanager
+from contextvars import ContextVar
 
 from prompt_toolkit import PromptSession
 from prompt_toolkit.completion import Completer, Completion
@@ -47,6 +48,7 @@ def approval_preview(args):
 
 
 _activity_lock = threading.Lock()
+_activity_status = ContextVar("activity_status", default=None)
 
 
 class ApprovalPrompt:
@@ -119,15 +121,84 @@ def tool_activity(name, *, label=None, keep_result=True, args=None):
     details = f" {approval_preview(args)}" if args is not None else ""
     label = label or f"Running {name}{details}..."
     failed = False
+    status_callback = _activity_status.get()
+    drawn_rows = 0
+    previous_lines = []
+    footer_lines = {}
+    anchored = False
+
+    def clear():
+        nonlocal drawn_rows
+        if anchored:
+            output = ["\x1b8"]
+            for row in footer_lines:
+                if row <= shutil.get_terminal_size().lines:
+                    output.append(f"\x1b[{row};1H\x1b[2K")
+            output.append("\x1b8\r\x1b[2K")
+            stream.write("".join(output))
+            return
+        output = []
+        for index in range(drawn_rows):
+            output.append("\r\x1b[2K")
+            if index < drawn_rows - 1:
+                output.append("\x1b[1A")
+        stream.write("".join(output))
+        drawn_rows = 0
 
     def draw(frame):
+        nonlocal drawn_rows, previous_lines, anchored, footer_lines
+        size = shutil.get_terminal_size()
+        width = max(1, size.columns - 1)
         line = f"{frame} {label}"
-        width = max(1, shutil.get_terminal_size().columns - 1)
         if get_cwidth(line) > width:
             while line and get_cwidth(line + "...") > width:
                 line = line[:-1]
             line += "..." if width >= 3 else ""
-        stream.write(f"\r\x1b[2K{line}")
+        lines = [line]
+        if status_callback:
+            lines.extend(render_toolbar(status_callback, width, include_hints=False).splitlines())
+            if size.lines >= 4:
+                status = lines[1:][:size.lines - 3]
+                output = []
+                if not anchored:
+                    # 先预留底栏和间隔；接近屏幕底部时由终端自然滚动对话。
+                    reserve = len(status) + 1
+                    output.append("\r\n" * reserve + f"\x1b[{reserve}A\r\x1b7")
+                    anchored = True
+                output.append("\x1b8\r" + line + "\x1b[K")
+                current_footer = dict(zip(range(size.lines - len(status) + 1, size.lines + 1), status))
+                for row in footer_lines.keys() - current_footer.keys():
+                    if row <= size.lines:
+                        output.append(f"\x1b[{row};1H\x1b[2K")
+                for row, text in current_footer.items():
+                    if footer_lines.get(row) != text:
+                        output.append(f"\x1b[{row};1H{text}\x1b[K")
+                output.append("\x1b8")
+                stream.write("".join(output))
+                footer_lines = current_footer
+                stream.flush()
+                return
+            if anchored:
+                clear()
+                anchored = False
+                footer_lines = {}
+                previous_lines = []
+                drawn_rows = 0
+        lines = lines[:max(1, shutil.get_terminal_size().lines - 1)]
+        if len(lines) == drawn_rows:
+            # 光标停留在最后一行，只更新变化的行，避免 SSH 中反复清空底栏。
+            output = [f"\x1b[{drawn_rows - 1}A" if drawn_rows > 1 else ""]
+            for index, (old, new) in enumerate(zip(previous_lines, lines)):
+                if old != new:
+                    output.append("\r" + new + "\x1b[K")
+                if index < drawn_rows - 1:
+                    output.append("\x1b[1B")
+            stream.write("".join(output))
+        else:
+            clear()
+            stream.write("\r\x1b[2K" + "\r\n".join(lines))
+        drawn_rows = len(lines)
+        previous_lines = lines
         stream.flush()
 
     def animate():
@@ -150,7 +221,7 @@ def tool_activity(name, *, label=None, keep_result=True, args=None):
         stopped.set()
         worker.join()
         try:
-            stream.write("\r\x1b[2K")
+            clear()
             if keep_result:
                 stream.write(f"{'Stopped' if failed else 'Finished'} {name}{details}\n")
             stream.flush()
@@ -254,7 +325,7 @@ def build_prompt_session(status_callback=None, history_callback=None, **kwargs):
     )
 
 
-def render_toolbar(status_callback=None, width=None):
+def render_toolbar(status_callback=None, width=None, *, include_hints=True):
     width = width or shutil.get_terminal_size().columns
     lines = list(status_callback()) if status_callback else []
     if width < 90:
@@ -263,7 +334,8 @@ def render_toolbar(status_callback=None, width=None):
                  .replace("最近请求上下文（接口）", "上下文接口")
                  .replace("会话累计", "累计").replace("缓存读取", "缓存")
                  .replace(" / 命中率", " 命中").replace(" / 等级", " 等级") for line in lines]
-    lines.append("/ commands | Up/Down select | Tab complete | Enter send | Ctrl-D exit")
+    if include_hints:
+        lines.append("/ commands | Up/Down select | Tab complete | Enter send | Ctrl-D exit")
     result = []
     for line in lines:
         if get_cwidth(line) > width:
@@ -276,7 +348,16 @@ def render_toolbar(status_callback=None, width=None):
 
 class TerminalInput:
     def __init__(self, status_callback=None, history_callback=None):
+        self.status_callback = status_callback
         self.session = build_prompt_session(status_callback=status_callback, history_callback=history_callback) if sys.stdin.isatty() and sys.stdout.isatty() else None
+
+    @contextmanager
+    def activity(self):
+        token = _activity_status.set(self.status_callback if self.session is not None else None)
+        try:
+            yield
+        finally:
+            _activity_status.reset(token)
 
     def read(self):
         if self.session is None:

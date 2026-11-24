@@ -408,7 +408,8 @@ def main(argv=None):
         if user_input == "/compact":
             try:
                 prompt, metadata = agent._build_prompt_and_metadata("")
-                build_request(agent, prompt, metadata, force_compaction=True)
+                with terminal.activity():
+                    build_request(agent, prompt, metadata, force_compaction=True)
                 print("历史已压缩，原始记录已保留。" if metadata["history_compacted"] else "暂无可压缩的新历史。")
             except (RuntimeError, ValueError) as exc:
                 print(agent.redact_text(str(exc)), file=sys.stderr)
@@ -420,7 +421,9 @@ def main(argv=None):
 
         print()
         try:
-            print(agent.ask(user_input))
+            with terminal.activity():
+                answer = agent.ask(user_input)
+            print(answer)
         except RuntimeError as exc:
             print(str(exc), file=sys.stderr)
 

@@ -156,6 +156,13 @@ LiteLLM types. `FakeModelClient` also requires structured `ModelResponse` fixtur
 
 ## Development
 
+The interactive status bar also appears while waiting for the model or running
+tools, anchored to the bottom of the terminal with a gap below the activity
+message. Unchanged status lines are not repainted on each animation frame.
+Context usage prefers the latest request's API-reported input tokens;
+while waiting, or when usage is unavailable, it shows a labeled local estimate.
+The percentage uses the configured context window as its denominator.
+
 ```sh
 uv run pytest -q
 uv run ruff check robin tests scripts

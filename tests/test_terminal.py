@@ -198,6 +198,112 @@ def test_toolbar_reads_current_status():
         assert "after" in session.bottom_toolbar()
 
 
+def test_running_status_refreshes_for_models_and_tools_and_cleans_up(monkeypatch):
+    from robin.terminal import TerminalInput
+    refreshed = threading.Event()
+    class Terminal(io.StringIO):
+        def isatty(self):
+            return True
+
+        def write(self, value):
+            result = super().write(value)
+            if "updated usage" in value:
+                refreshed.set()
+            return result
+
+    stream = Terminal()
+    monkeypatch.setattr("sys.stderr", stream)
+    terminal = TerminalInput(status_callback=lambda: status)
+    # 不启动真实输入应用，只验证交互模式的运行状态生命周期。
+    terminal.session = object()
+    status = ["initial usage", "cache status"]
+    with pytest.raises(ValueError), terminal.activity():
+        with tool_activity("model", keep_result=False):
+            assert "initial usage" in stream.getvalue()
+            assert "cache status" in stream.getvalue()
+            status[0] = "updated usage"
+            assert refreshed.wait(2)
+        with tool_activity("run_shell"):
+            assert stream.getvalue().count("updated usage") >= 2
+            raise ValueError("failed")
+    assert "\x1b8" in stream.getvalue()
+    assert stream.getvalue().endswith("Stopped run_shell\n")
+    before = stream.getvalue()
+    with tool_activity("model", keep_result=False):
+        pass
+    assert "usage" not in stream.getvalue()[len(before):]
+
+
+def test_noninteractive_activity_does_not_show_status(monkeypatch):
+    from robin.terminal import TerminalInput
+    monkeypatch.setattr("sys.stdin", io.StringIO())
+    terminal = TerminalInput(status_callback=lambda: ["tokens"])
+    stream = io.StringIO()
+    monkeypatch.setattr("sys.stderr", stream)
+    with terminal.activity(), tool_activity("model"):
+        pass
+    assert stream.getvalue() == ""
+
+
+def test_activity_animation_does_not_clear_or_repaint_unchanged_status(monkeypatch):
+    from robin.terminal import TerminalInput
+    animated = threading.Event()
+
+    class Terminal(io.StringIO):
+        def isatty(self):
+            return True
+
+        def write(self, value):
+            result = super().write(value)
+            if "/ Waiting" in value:
+                animated.set()
+            return result
+
+    stream = Terminal()
+    monkeypatch.setattr("sys.stderr", stream)
+    terminal = TerminalInput(status_callback=lambda: ["Stable usage", "Stable cache"])
+    terminal.session = object()
+    with terminal.activity(), tool_activity("model", label="Waiting", keep_result=False):
+        assert animated.wait(2)
+        output = stream.getvalue()
+        assert output.count("Stable usage") == 1
+        assert output.count("Stable cache") == 1
+        assert output.count("\x1b[2K") == 0
+        assert "\x1b[K" in output
+    assert stream.getvalue().endswith("\r\x1b[2K")
+
+
+def test_activity_footer_anchors_to_bottom_and_follows_resize(monkeypatch):
+    import os
+    from robin.terminal import TerminalInput
+    updated = threading.Event()
+    size = [os.terminal_size((100, 30))]
+
+    class Terminal(io.StringIO):
+        def isatty(self):
+            return True
+
+        def write(self, value):
+            result = super().write(value)
+            if "\x1b[39;1HUsage" in value:
+                updated.set()
+            return result
+
+    stream = Terminal()
+    monkeypatch.setattr("sys.stderr", stream)
+    monkeypatch.setattr("robin.terminal.shutil.get_terminal_size", lambda: size[0])
+    terminal = TerminalInput(status_callback=lambda: ["Usage", "Context"])
+    terminal.session = object()
+    with terminal.activity(), tool_activity("model", keep_result=False):
+        assert "\x1b[29;1HUsage\x1b[K\x1b[30;1HContext" in stream.getvalue()
+        assert stream.getvalue().startswith("\r\n" * 3 + "\x1b[3A")
+        size[0] = os.terminal_size((100, 40))
+        assert updated.wait(2)
+        assert "\x1b[29;1H\x1b[2K" in stream.getvalue()
+        assert "\x1b[40;1HContext" in stream.getvalue()
+    assert "\x1b[40;1H\x1b[2K" in stream.getvalue()
+
+
 def test_slash_menu_filters_commands():
     completer = SlashCompleter()
     assert [c.text for c in completer.get_completions(Document("/"), None)] == [
