@@ -4,6 +4,8 @@ Robin 是一个优先面向 Linux 的本地命令行编码助手。通过自然�
 
 项目使用 Python 和 uv，包名为 `robin`。它也用于学习 Agent 工程：从真实问题出发，研究上下文、工具执行、记忆和恢复机制，并记录设计取舍。
 
+![Robin 使用演示](docs/imgs/use_in_readme.gif)
+
 [架构详解](docs/agent-architecture.md) · [设计学习笔记](knowledge/agent-design/README.md) · [开发约定](CLAUDE.md)
 
 ## 已有能力

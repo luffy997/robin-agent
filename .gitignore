@@ -56,4 +56,7 @@ robin.egg-info/
 benchmarks
 /docs/*
 !/docs/agent-architecture.md
+!/docs/imgs/
+/docs/imgs/*
+!/docs/imgs/use_in_readme.gif
 scripts
