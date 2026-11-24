@@ -104,6 +104,7 @@ def compact_history(agent, system, groups, tools, metadata, retained="", force=F
     # 被压缩的正文不再可见，不能据旧范围拒绝必要重读。
     agent.tool_executor._read_pages.clear()
     agent.tool_executor._read_context.clear()
+    agent.tool_executor._visible_read_context.clear()
     metadata.update(history_compacted=True, history_compacted_through=checkpoint["through"])
     state = agent.current_task_state
     if state is not None and not force:

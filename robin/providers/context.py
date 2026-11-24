@@ -97,6 +97,9 @@ def build_request(agent, prompt, metadata, finalization=False, force_compaction=
             }
         )
     limit, estimated_input = output_budget(messages, definitions, agent.max_new_tokens, agent.context_window)
+    if executor is not None:
+        # 只有实际纳入请求的全文才能支持拒绝重读；历史读取次数不代表模型可见。
+        executor._visible_read_context = set(executor._read_context) if retained else set()
     metadata.update({"requested_output_tokens": agent.max_new_tokens,
                      "effective_output_tokens": limit, "estimated_input_tokens": estimated_input,
                      "context_window": agent.context_window})

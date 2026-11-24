@@ -10,7 +10,7 @@ import tempfile
 from .workspace import clip
 from .terminal import tool_activity
 from .security import redact_artifact
-from .tool_output import READ_PAGE, read_page, merge_ranges
+from .tool_output import READ_PAGE, merge_ranges
 
 
 MAX_READ_CONTEXT_BYTES = 12000
@@ -71,6 +71,7 @@ class ToolExecutor:
         self.agent = agent
         self._read_pages = []
         self._read_context = {}
+        self._visible_read_context = set()
 
     def read_context(self):
         """只保留当前轮次、内容仍一致的小文件全文，作为有界的代码上下文。"""
@@ -160,29 +161,12 @@ class ToolExecutor:
                 turn = sum(item["role"] == "user" for item in agent.session["history"])
                 self._read_pages = [(key, page) for key, page in self._read_pages if key[0] == turn and (key[1] != str(path) or key[2] == version)]
                 read_identity = (turn, str(path), version)
-                start = int(args.get("start", 1))
-                candidate = read_page(path.relative_to(agent.root), data.decode("utf-8", errors="replace").splitlines(), start, int(args.get("end", 200)))
-                page_info = READ_PAGE.search(candidate)
-                cursor, total = page_info.group(2, 3)
-                last = int(total) if cursor == "EOF" else int(cursor) - 1
+                total = len(data.decode("utf-8", errors="replace").splitlines())
                 covered = merge_ranges([page for key, page in self._read_pages if key == read_identity])
-                if read_identity in self._read_context and covered == [(1, int(total))]:
+                if (read_identity in self._read_context and read_identity in self._visible_read_context
+                        and covered == [(1, int(total))]):
                     return ToolExecutionResult(
                         content="error: unchanged file already fully read; its complete content is retained in the current model context. Use it to implement or verify the task; no unread lines remain.",
-                        metadata=_metadata("rejected", tool_error_code="repeated_read_range", read_only=True),
-                    )
-                matching = [page for key, page in self._read_pages if key == read_identity and page[0] <= start <= last <= page[1]]
-                if len(matching) >= 2:
-                    next_start = 1
-                    for low, high in covered:
-                        if low > next_start:
-                            break
-                        next_start = max(next_start, high + 1)
-                    hint = (f"First unread line: {next_start}; use read_file start={next_start}."
-                            if next_start <= int(total) else
-                            "No unread lines remain. If earlier content left the context, request a smaller specific range needed for the next edit.")
-                    return ToolExecutionResult(
-                        content=f"error: unchanged file range already returned twice. {hint}",
                         metadata=_metadata("rejected", tool_error_code="repeated_read_range", read_only=True),
                     )
         if name != "read_file" and agent.repeated_tool_call(name, args):

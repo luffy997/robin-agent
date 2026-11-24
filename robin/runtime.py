@@ -730,6 +730,7 @@ class Robin:
         """清空 session 历史和记忆并保存。"""
         self.tool_executor._read_pages.clear()
         self.tool_executor._read_context.clear()
+        self.tool_executor._visible_read_context.clear()
         self.session["usage"] = empty_usage()
         self.turn_usage = empty_usage()
         self.context_usage = {}

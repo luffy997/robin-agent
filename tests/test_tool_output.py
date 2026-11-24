@@ -41,7 +41,7 @@ def test_repeated_read_across_other_calls_allows_changed_file_and_new_ranges(tmp
     for _ in range(2):
         assert agent.execute_tool("read_file", args).metadata["tool_status"] == "ok"
         agent.execute_tool("list_files", {})
-    assert agent.execute_tool("read_file", args).metadata["tool_error_code"] == "repeated_read_range"
+    assert agent.execute_tool("read_file", args).metadata["tool_status"] == "ok"
     assert agent.execute_tool("read_file", {**args, "end": 3}).metadata["tool_status"] == "ok"
     path.write_text("changed\ntwo\nthree\n")
     assert "changed" in agent.execute_tool("read_file", args).content
@@ -69,11 +69,14 @@ def test_merged_full_read_is_retained_until_file_changes(tmp_path):
     path.write_text("first\nsecond\nthird\nfourth\n")
     for start, end in [(1, 2), (3, 4)]:
         assert agent.execute_tool("read_file", {"path": "sample", "start": start, "end": end}).metadata["tool_status"] == "ok"
+    assert agent.execute_tool("read_file", {"path": "sample", "start": 2, "end": 4}).metadata["tool_status"] == "ok"
+    request = build_request(agent, "task", {"section_budgets": {"history": 80}})
+    assert any("first\nsecond\nthird\nfourth" in m["content"] for m in request.messages)
     result = agent.execute_tool("read_file", {"path": "sample", "start": 2, "end": 4})
     assert "already fully read" in result.content
     assert "start=5" not in result.content
-    request = build_request(agent, "task", {"section_budgets": {"history": 80}})
-    assert any("first\nsecond\nthird\nfourth" in m["content"] for m in request.messages)
+    agent.tool_executor._read_context.clear()
+    assert agent.execute_tool("read_file", {"path": "sample"}).metadata["tool_status"] == "ok"
     path.write_text("changed\n")
     assert "first\nsecond" not in agent.tool_executor.read_context()
     assert "changed" in agent.execute_tool("read_file", {"path": "sample"}).content
@@ -81,13 +84,30 @@ def test_merged_full_read_is_retained_until_file_changes(tmp_path):
     assert not agent.tool_executor.read_context()
 
 
-def test_repeated_range_hint_skips_all_covered_pages(tmp_path):
+def test_repeated_range_without_retained_full_context_remains_readable(tmp_path):
     agent = build_agent(tmp_path, [])
     (tmp_path / "sample").write_text("line\n" * 10)
     for start, end in [(1, 2), (3, 4), (1, 2)]:
         agent.execute_tool("read_file", {"path": "sample", "start": start, "end": end})
     result = agent.execute_tool("read_file", {"path": "sample", "start": 1, "end": 2})
-    assert "First unread line: 5" in result.content
+    assert result.metadata["tool_status"] == "ok"
+    assert "line" in result.content
+
+
+def test_content_change_with_same_mtime_and_size_allows_reread(tmp_path):
+    from robin.providers.context import build_request
+    agent = build_agent(tmp_path, [])
+    path = tmp_path / "sample"
+    path.write_text("before\n")
+    agent.execute_tool("read_file", {"path": "sample"})
+    build_request(agent, "task", {})
+    assert agent.execute_tool("read_file", {"path": "sample"}).metadata["tool_status"] == "rejected"
+    before = path.stat()
+    path.write_text("after!\n")
+    os.utime(path, ns=(before.st_atime_ns, before.st_mtime_ns))
+    result = agent.execute_tool("read_file", {"path": "sample"})
+    assert result.metadata["tool_status"] == "ok"
+    assert "after!" in result.content
 
 
 @pytest.mark.parametrize("replacement", ["fifo", "directory", "missing", "grown", "changed"])
