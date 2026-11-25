@@ -1,29 +1,23 @@
 # 架构文档组织与源码核验
 
 - 创建日期：2026-11-24
-- 更新日期：2026-11-24
+- 更新日期：2026-11-25
 - 状态：已验证
-- 参考项目：本地 Ally `47250a80f7d9c0ec29de335ace0bf7457f6d06a0`；Robin `df16a93` 工作区
+- 核验项目：Robin `df16a93` 工作区
 - 关键词：架构文档、README、源码核验、能力边界、面试复盘
 
 ## 1. 问题与现场
 
-用户希望参考 `/data/code/ally-agent` 下的架构文档和 README，为 Robin 编写同类文档，并选择两篇都使用中文。原 README 混合产品使用与内部机制，部分描述已过时；`docs/agent-architecture.md` 为空，且被 Git 忽略。
+用户希望为 Robin 编写架构文档和 README，并选择两篇都使用中文。原 README 混合产品使用与内部机制，部分描述已过时；`docs/agent-architecture.md` 为空，且被 Git 忽略。
 
-## 2. 参考项目如何解决
+## 2. 文档组织方式
 
-文档事实：Ally 的 README 先介绍产品、功能与启动方式，再链接具体能力说明；中文架构文档按一次对话生命周期组织，用流程图和时序图解释循环、上下文、工具、持久化与界面，附机制取舍和参考资料。
-
-本次借鉴信息组织方式，没有核实 Ally 文档中的全部运行时机制，因此不将其能力描述作为上游源码结论，也不将其并发、流式、MCP 或桌面功能归到 Robin。
-
-本地 Ally 工作区另有 CODEGRAPH.md 改动和未跟踪文档；所参考两篇文档在本次查看的 Git 状态中没有改动。版本定位是本地证据，不代表对远端最新版本的判断。
+README 介绍产品、功能与启动方式；中文架构文档按一次对话生命周期组织，用流程图和时序图解释循环、上下文、工具、持久化与界面，并说明机制取舍。能力描述以 Robin 当前源码为依据。
 
 ## 3. 源码阅读入口
 
 | 项目与版本 | 文件、符号与关键位置 | 来源链接或本地定位 | 支持的结论 |
 | --- | --- | --- | --- |
-| Ally `47250a8` | README.md：Features、Getting started | `/data/code/ally-agent/README.md` | 产品入口组织 |
-| Ally `47250a8` | docs/agent-architecture.md：目录、全景、核心循环 | `/data/code/ally-agent/docs/agent-architecture.md` | 生命周期、图示和机制解释方式 |
 | Robin `df16a93` 工作区 | AgentLoop.run、ToolExecutor.execute | `robin/agent_loop.py`、`robin/tool_executor.py` | 同步循环、顺序工具调用、预算与护栏 |
 | Robin `df16a93` 工作区 | build_request、compact_history | `robin/providers/context.py`、`robin/history_compaction.py` | 原生历史与字符预算区别、压缩边界 |
 | Robin `df16a93` 工作区 | SessionStore.save、spawn_delegate | `robin/session_store.py`、`robin/runtime.py` | 非原子写入、受限只读委派与恢复限制 |
@@ -39,6 +33,8 @@
 ## 5. 用户最终决定
 
 2026-11-24：用户选择“两篇都用中文”，随后接受文档方案，包括单独放行架构文档的 Git 跟踪、保留 docs_inner 用户内容、不修改运行时，以及不自动提交。
+
+2026-11-25：用户要求清理指定外部项目的全部文档引用，保留 Robin 自身的架构说明与源码核验记录。
 
 ## 6. 实现与验证
 
@@ -56,4 +52,4 @@
 
 ## 决策变更记录
 
-暂无。
+2026-11-25：文档由保留外部项目来源说明调整为聚焦 Robin 自身，按用户要求删除对应引用、路径及版本信息。

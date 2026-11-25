@@ -354,7 +354,3 @@ uv build
 2. 原始 history、压缩摘要、工作记忆和恢复 checkpoint 各自解决什么问题？
 3. 为什么内容 hash 不变，还不能仅凭“以前读过”拒绝重读？
 4. 为什么调用日志与 checkpoint 无法单独保证任意 Shell 的 exactly-once？
-
-### 文档参考
-
-组织方式参考本地 Ally `47250a80f7d9c0ec29de335ace0bf7457f6d06a0` 的 `README.md` 与 `docs/agent-architecture.md`：README 提供产品入口，架构文档按请求生命周期解释机制、流程与取舍。本文没有复用 Ally 的功能清单或将其行为归于 Robin；研究范围和证据见[学习笔记](../knowledge/agent-design/2026-11-24-architecture-documentation.md)。
