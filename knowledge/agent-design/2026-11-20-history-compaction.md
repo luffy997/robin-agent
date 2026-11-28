@@ -1,7 +1,7 @@
 # 历史裁剪与任务进度保留
 
 - 创建日期：2026-11-20
-- 更新日期：2026-11-23
+- 更新日期：2026-11-28
 - 状态：已验证
 - 参考项目：本地 OpenCode `56dc95bff5f002321a12de5bbbe2783cd0c87e2a`；本地 Pi 阅读修改版 `f13d2791191cfcc557c6a30af8446e836b1741a8`
 - 关键词：上下文、历史裁剪、compaction、进度摘要、重复读取
@@ -75,3 +75,22 @@ Robin 原生请求默认仅保留 5200 字符序列化历史，包含工具参�
 调用既有压缩链路，允许在阈值之前生成摘要；短会话整体归纳，空会话或无新增历史不请求模型。
 原始记录、用量统计、恢复及失败保留行为沿用既有实现，不启动工具或新任务。
 针对压缩及终端的 25 项测试通过，Ruff 与差异检查通过；无真实模型验证。
+
+
+2026-11-28：用户要求用 LiteLLM 的 token 计数替代字符估算。已实施
+`providers/limits.py::estimate_input` 优先调用当前固定依赖 LiteLLM 1.110.0 的
+`token_counter(model=当前模型名, messages=结构化消息, tools=工具定义)`；
+`output_budget`、`compact_history` 的触发判断、近期保留、摘要请求和压缩后校验均传递同一模型名。
+保留 4096 token 安全余量。无模型名（如 FakeModelClient）继续使用字符预算；
+计数异常或返回无效/禁用计数的零值时记录警告并退回字符预算。
+未知模型可能由 LiteLLM 使用通用 tokenizer，不能承诺与供应商账单一致。
+源码核验了安装版的 `token_counter`、`_MessageCountParams` 与 tokenizer 选择路径；
+在线文档访问失败，未依赖未获取的文档结论，也未重跑上游研究。
+
+新增测试覆盖模型名、消息与工具传递、预算计算、异常和无效计数回退，
+并使用实际 LiteLLM 的 gpt-4o tokenizer 验证中文、代码、工具定义与调用参数计数。
+压缩集成测试覆盖摘要和最终请求共用模型计数。首批 41 项预算/历史/原生消息测试通过；
+全量 `uv run pytest -q` 为 267 项通过、1 项失败：
+`test_reviewer_skeleton_docs_exist` 因当前工作区缺少 `docs/review-pack/README.md` 失败，
+与本次计数变更无关；新增与相关回归通过。Ruff、`git diff --check` 通过。
+未调用真实供应商接口验证账单 token 对齐。

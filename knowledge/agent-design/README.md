@@ -10,7 +10,7 @@
 | 主题 | 参考项目 | 状态 | 更新日期 |
 | --- | --- | --- | --- |
 | [架构文档组织与源码核验](2026-11-24-architecture-documentation.md) | Robin | 已验证 | 2026-11-25 |
-| [历史裁剪与任务进度保留](2026-11-20-history-compaction.md) | 本地 OpenCode、本地 Pi 阅读版、Robin | 已验证 | 2026-11-23 |
+| [历史裁剪与任务进度保留](2026-11-20-history-compaction.md) | 本地 OpenCode、本地 Pi 阅读版、Robin、LiteLLM | 已验证 | 2026-11-28 |
 | [工具输出截断与重复读取](2026-11-19-tool-output-pagination.md) | 本地 OpenCode、本地 Pi 阅读版、Robin | 已验证 | 2026-11-19 |
 | [从探索转向实现与测试](2026-11-19-exploration-to-implementation.md) | 本地 OpenCode、本地 Pi 阅读版、Robin | 已验证 | 2026-11-19 |
 | [文件变化记录与快照范围](2026-11-19-workspace-snapshot-scope.md) | 本地 OpenCode、本地 Pi 阅读版、Robin | 已验证 | 2026-11-19 |

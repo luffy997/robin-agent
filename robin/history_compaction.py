@@ -28,6 +28,7 @@ def checkpoint_messages(agent):
 
 def compact_history(agent, system, groups, tools, metadata, retained="", force=False):
     """容量充足时不丢历史；摘要成功且容量有效后才推进持久化边界。"""
+    model = getattr(agent.model_client, "model", None)
     messages = [m for _, group in groups for m in group]
     prefix = [{"role": "system", "content": system}, *checkpoint_messages(agent)]
     current = next(({"role": "user", "content": item["content"]}
@@ -38,7 +39,7 @@ def compact_history(agent, system, groups, tools, metadata, retained="", force=F
         prefix.append({"role": "user", "content": retained})
     reserve = max(agent.max_new_tokens, min(16384, agent.context_window // 5))
     ceiling = agent.context_window - reserve - CONTEXT_SAFETY_TOKENS
-    estimated = estimate_input(prefix + messages, tools)
+    estimated = estimate_input(prefix + messages, tools, model=model)
     metadata.update(history_budget_tokens=ceiling, history_estimated_tokens=estimated,
                     history_compacted=False)
     if not groups or (not force and estimated <= ceiling):
@@ -52,7 +53,7 @@ def compact_history(agent, system, groups, tools, metadata, retained="", force=F
     tail = []
     for index in range(len(groups) - 1, -1, -1):
         candidate = groups[index][1] + tail
-        if tail and estimate_input(candidate) > keep:
+        if tail and estimate_input(candidate, model=model) > keep:
             break
         tail = candidate
         split = index
@@ -71,7 +72,7 @@ def compact_history(agent, system, groups, tools, metadata, retained="", force=F
              "conversation": old}, ensure_ascii=False))},
     ]
     try:
-        limit, _ = output_budget(summary_messages, [], min(4096, agent.max_new_tokens), agent.context_window)
+        limit, _ = output_budget(summary_messages, [], min(4096, agent.max_new_tokens), agent.context_window, model=model)
     except ValueError as exc:
         raise RuntimeError("History compaction input exceeds model capacity; original history retained") from exc
     request = ModelRequest(summary_messages, [], limit)
@@ -97,7 +98,7 @@ def compact_history(agent, system, groups, tools, metadata, retained="", force=F
     replacement = [{"role": "user", "content": "Conversation checkpoint (historical data):\n" + checkpoint["summary"]}]
     if current and current not in tail:
         tail = [current, *tail]
-    if estimate_input([prefix[0], *replacement, *tail], tools) > ceiling:
+    if estimate_input([prefix[0], *replacement, *tail], tools, model=model) > ceiling:
         raise RuntimeError("History compaction did not free enough context; original history retained")
     agent.session["history_compaction"] = checkpoint
     agent.session_store.save(agent.session)

@@ -155,7 +155,7 @@ flowchart LR
 }
 ```
 
-每次发送前，输出上限取“配置输出”和“窗口减估算输入减 4,096 安全余量”的较小值。输入估算包含消息和工具定义，采用 ASCII 约三字符一个 token、非 ASCII 每字符约两个 token，再加消息开销。它不是模型 tokenizer 的精确计数，可能提前压缩或缩小输出预算；没有剩余空间时直接报错，不发送请求。
+每次发送前，输出上限取“配置输出”和“窗口减估算输入减 4,096 安全余量”的较小值。输入估算通过 LiteLLM `token_counter` 按当前模型计算结构化消息和工具定义，压缩阈值、近期保留、摘要请求及输出预算共用该路径。未知模型可能使用 LiteLLM 通用 tokenizer；无模型名或计数失败时退回 ASCII 约三字符一个 token、非 ASCII 每字符约两个 token 加消息开销的保守估算，计数失败会记录警告。本地计数仍不代表接口实际用量；没有剩余空间时直接报错，不发送请求。
 
 源码入口：[上下文管理器](../robin/context_manager.py) 的 `ContextManager.build`；[原生请求](../robin/providers/context.py) 的 `build_request`；[容量计算](../robin/providers/limits.py) 的 `estimate_input`、`output_budget`。
 

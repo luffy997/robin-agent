@@ -1,6 +1,7 @@
 """Local model limits and conservative request budgeting; no remote catalog lookup."""
 
 import json
+import logging
 import math
 from pathlib import Path
 
@@ -35,8 +36,8 @@ def model_limits(root, provider, model):
     return output, context
 
 
-def output_budget(messages, tools, requested, context_window):
-    estimated_input = estimate_input(messages, tools)
+def output_budget(messages, tools, requested, context_window, *, model=None):
+    estimated_input = estimate_input(messages, tools, model=model)
     available = context_window - estimated_input - CONTEXT_SAFETY_TOKENS
     if available < 1:
         raise ValueError(
@@ -46,8 +47,22 @@ def output_budget(messages, tools, requested, context_window):
     return min(requested, available), estimated_input
 
 
-def estimate_input(messages, tools=()):
-    """本地保守估计：ASCII 约三字符一个 token，非 ASCII 每字符两个；不计为接口用量。"""
+def estimate_input(messages, tools=(), *, model=None):
+    """优先按模型 tokenizer 估算；无模型或计数失败时退回保守字符预算。"""
+    if model:
+        from .clients import _library
+
+        try:
+            count = _library().token_counter(
+                model=model, messages=messages, tools=list(tools) or None,
+                use_default_image_token_count=True,
+            )
+            if isinstance(count, int) and not isinstance(count, bool) and count > 0:
+                return count
+        except Exception:
+            # 计数不可用不能阻断任务，也不能把禁用计数时的零当成空上下文。
+            pass
+        logging.getLogger(__name__).warning("LiteLLM token counting unavailable; using character estimate")
     serialized = json.dumps({"messages": messages, "tools": tools}, ensure_ascii=False)
     ascii_chars = sum(ord(char) < 128 for char in serialized)
     return math.ceil(ascii_chars / 3) + 2 * (len(serialized) - ascii_chars) + 32 * len(messages)

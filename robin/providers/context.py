@@ -96,7 +96,10 @@ def build_request(agent, prompt, metadata, finalization=False, force_compaction=
                 "content": "Tool budget exhausted. Summarize the available evidence without calling tools.",
             }
         )
-    limit, estimated_input = output_budget(messages, definitions, agent.max_new_tokens, agent.context_window)
+    limit, estimated_input = output_budget(
+        messages, definitions, agent.max_new_tokens, agent.context_window,
+        model=getattr(agent.model_client, "model", None),
+    )
     if executor is not None:
         # 只有实际纳入请求的全文才能支持拒绝重读；历史读取次数不代表模型可见。
         executor._visible_read_context = set(executor._read_context) if retained else set()

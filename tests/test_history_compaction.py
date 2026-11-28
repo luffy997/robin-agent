@@ -28,6 +28,31 @@ def test_large_history_preserved_while_capacity_available(tmp_path):
     assert agent.model_client.requests == []
 
 
+def test_model_tokenizer_used_for_compaction_summary_and_final_budget(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+    from robin.providers import clients
+    from robin.providers.limits import estimate_input
+
+    counted = []
+
+    def count(**kwargs):
+        counted.append(kwargs)
+        return estimate_input(kwargs["messages"], kwargs["tools"] or [])
+
+    monkeypatch.setattr(clients, "_library", lambda: SimpleNamespace(token_counter=count))
+    agent = agent_at(tmp_path, [text_response("Goal: fix CLI; Failed: missing path")],
+                     context_window=24000, max_new_tokens=2000)
+    agent.model_client.model = "custom-model"
+    seed_history(agent)
+    metadata = {}
+    build_request(agent, "system", metadata)
+    assert metadata["history_compacted"]
+    assert len(counted) >= 5
+    assert all(call["model"] == "custom-model" for call in counted)
+    assert any("Summarize this conversation" in call["messages"][0]["content"] for call in counted)
+    assert counted[-1]["tools"]
+
+
 def test_compaction_keeps_groups_goal_usage_and_persists_resume(tmp_path):
     summary = ModelResponse(text="Done: handler. Failed: missing path. Next: fix CLI, test.", usage=Usage(123, 45))
     agent = agent_at(tmp_path, [summary], context_window=24000, max_new_tokens=2000)
