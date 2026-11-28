@@ -4,7 +4,7 @@ import json
 import pytest
 
 from robin import FakeModelClient, Robin, SessionStore, WorkspaceContext
-from robin.evaluation.evaluator import BenchmarkEvaluator, validate_benchmark
+from evaluation.evaluator import BenchmarkEvaluator, validate_benchmark
 
 
 def build_agent(tmp_path, allowed_tools=None):

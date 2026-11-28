@@ -138,11 +138,23 @@ uv run robin --cwd /path/to/project --resume SESSION_ID
 
 ```sh
 uv run pytest -q
-uv run ruff check robin tests
+uv run ruff check robin evaluation scripts tests
 uv build
 ```
 
 测试覆盖协议适配、工具执行、路径与审批、预算、上下文压缩、记忆、恢复和终端交互。测试使用 Fake 客户端或模拟传输，不需要真实密钥。
+
+评测代码位于 `evaluation/`，脚本入口位于 `scripts/`，固定任务定义位于
+`benchmarks/coding_tasks.json`；这些研发资产与测试样例一起纳入版本管理。
+生产 wheel 仅包含 `robin` 包，评测需在源码仓库中运行：
+
+```sh
+uv run python scripts/run_benchmark.py
+```
+
+此命令使用确定性模拟客户端验证执行机制，不代表真实模型的任务成功率。
+生成的报告与工作区写入 `artifacts/`，不纳入版本管理。
+其他实验脚本可通过 `--help` 查看参数；供应商实验会请求真实模型服务。
 
 `uv build` 生成 wheel 和源码包，运行仍需 Python；当前没有独立 Linux 可执行文件。终端交互已经实现，模型输出目前为同步非流式。
 

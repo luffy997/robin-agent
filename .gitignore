@@ -53,10 +53,10 @@ readme_intro_locked/
 
 # Packaging metadata
 robin.egg-info/
-benchmarks
+/benchmarks/*
+!/benchmarks/coding_tasks.json
 /docs/*
 !/docs/agent-architecture.md
 !/docs/imgs/
 /docs/imgs/*
 !/docs/imgs/use_in_readme.gif
-scripts

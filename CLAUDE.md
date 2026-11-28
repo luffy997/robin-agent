@@ -31,7 +31,7 @@ uv run robin "解释这个仓库的结构"     # one-shot
 uv run robin --cwd /path/to/repo      # 交互式 REPL
 uv run pytest -q                     # 全量测试（约 30s）
 uv run pytest tests/test_memory.py -q  # 单文件
-uv run ruff check robin tests        # 只检查已入库目录
+uv run ruff check robin evaluation scripts tests        # 只检查已入库目录
 uv build                             # 生成 wheel 与 sdist
 ```
 
@@ -60,10 +60,10 @@ uv build                             # 生成 wheel 与 sdist
 | `robin/run_store.py` | `.robin/runs/<run_id>/` 审计工件 |
 | `robin/session_store.py` | `.robin/sessions/<id>.json` 会话持久化 |
 | `robin/terminal.py` | prompt_toolkit 输入、历史、slash 命令补全 |
-| `robin/evaluation/` | 基准评测、消融/安全/记忆/恢复指标 |
+| `evaluation/` | 基准评测、消融/安全/记忆/恢复指标 |
 
-`benchmarks/`、`docs/`、`scripts/` 目前在 `.gitignore` 中，但 README 和评测代码仍引用它们
-（例如 `evaluator.DEFAULT_BENCHMARK_PATH`）；改动这些默认路径前先确认仓库里是否存在对应文件。
+`evaluation/`、`scripts/` 和 `benchmarks/coding_tasks.json` 是入库的研发资产，不进入生产 wheel；源码分发保留评测与测试资产。
+评测结果写入忽略的 `artifacts/`；`docs/` 仍按 `.gitignore` 白名单管理。
 
 ## 核心机制
 

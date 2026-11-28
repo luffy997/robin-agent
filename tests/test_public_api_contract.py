@@ -30,8 +30,8 @@ def test_build_agent_returns_robin(tmp_path):
 
 
 def test_lightweight_package_split_uses_package_paths_without_legacy_shims():
-    from robin.evaluation.evaluator import BenchmarkEvaluator
-    from robin.evaluation.metrics import run_context_ablation_v2
+    from evaluation.evaluator import BenchmarkEvaluator
+    from evaluation.metrics import run_context_ablation_v2
     from robin.features.memory import LayeredMemory
     from robin.providers.clients import FakeModelClient as ProviderFakeModelClient
 
@@ -45,6 +45,6 @@ def test_lightweight_package_split_uses_package_paths_without_legacy_shims():
 
 def test_packaging_discovers_robin_subpackages():
     pyproject_text = Path("pyproject.toml").read_text(encoding="utf-8")
-
-    assert "[tool.setuptools.packages.find]" in pyproject_text
     assert 'include = ["robin*"]' in pyproject_text
+    assert (Path("evaluation") / "evaluator.py").is_file()
+    assert not (Path("robin") / "evaluation").exists()
